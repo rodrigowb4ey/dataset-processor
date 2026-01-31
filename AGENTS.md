@@ -317,38 +317,37 @@ Write progress to DB at these points:
 │   ├── env.py
 │   └── versions/
 ├── src/
-│   └── dataset_processor/
-│       ├── __init__.py
-│       ├── api/
-│       │   ├── main.py
-│       │   ├── deps.py
-│       │   └── routes/
-│       │       ├── datasets.py
-│       │       ├── jobs.py
-│       │       └── reports.py
-│       ├── core/
-│       │   ├── config.py
-│       │   └── logging.py
-│       ├── db/
-│       │   ├── base.py
-│       │   ├── session.py
-│       │   └── models.py
-│       ├── schemas/
-│       │   ├── dataset.py
-│       │   ├── job.py
-│       │   └── report.py
-│       ├── services/
-│       │   ├── storage.py
-│       │   ├── datasets.py
-│       │   └── reports.py
-│       ├── processing/
-│       │   ├── parsers.py
-│       │   ├── stats.py
-│       │   └── anomalies.py
-│       ├── worker/
-│       │   ├── celery_app.py
-│       │   └── tasks.py
-│       └── utils/
+│   ├── __init__.py
+│   ├── api/
+│   │   ├── main.py
+│   │   ├── deps.py
+│   │   └── routes/
+│   │       ├── datasets.py
+│   │       ├── jobs.py
+│   │       └── reports.py
+│   ├── core/
+│   │   ├── config.py
+│   │   └── logging.py
+│   ├── db/
+│   │   ├── base.py
+│   │   ├── session.py
+│   │   └── models.py
+│   ├── schemas/
+│   │   ├── dataset.py
+│   │   ├── job.py
+│   │   └── report.py
+│   ├── services/
+│   │   ├── storage.py
+│   │   ├── datasets.py
+│   │   └── reports.py
+│   ├── processing/
+│   │   ├── parsers.py
+│   │   ├── stats.py
+│   │   └── anomalies.py
+│   ├── worker/
+│   │   ├── celery_app.py
+│   │   └── tasks.py
+│   └── utils/
 │           ├── checksum.py
 │           └── streaming.py
 └── tests/
