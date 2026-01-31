@@ -2,8 +2,7 @@ from celery import Celery
 
 from src.core.config import settings
 
-
-celery_app = Celery(
+celery_app: Celery = Celery(
     "dataset_processor",
     broker=settings.celery_broker_url,
     include=["src.worker.tasks"],

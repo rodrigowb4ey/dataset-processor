@@ -16,6 +16,7 @@ dependencies = [
 
 [dependency-groups]
 dev = [
+    "celery-types>=0.24.0",
     "httpx>=0.28.1",
     "ipython>=9.9.0",
     "mypy>=1.19.1",
@@ -25,3 +26,57 @@ dev = [
     "taskipy>=1.14.1",
     "testcontainers[minio,postgres]>=4.14.0",
 ]
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+src = ["src", "tests"]
+extend-exclude = ["migrations"]
+
+[tool.ruff.lint]
+select = [
+    "E",
+    "F",
+    "W",
+    "I",
+    "B",
+    "UP",
+    "SIM",
+    "C4",
+    "A",
+    "ARG",
+    "PIE",
+    "RET",
+    "SLF",
+    "TCH",
+    "TID",
+    "RUF",
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["src"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "auto"
+
+[tool.mypy]
+python_version = "3.13"
+strict = true
+warn_unused_ignores = true
+warn_unreachable = true
+show_error_codes = true
+pretty = true
+files = ["src", "tests"]
+exclude = "(^migrations/)"
+plugins = ["pydantic.mypy"]
+
+[tool.taskipy.tasks]
+format = "uv run ruff format"
+format-check = "uv run ruff format --check"
+lint = "uv run ruff check"
+lint-fix = "uv run ruff check --fix"
+typecheck = "uv run mypy"
+check = "uv run ruff format --check && uv run ruff check && uv run mypy"

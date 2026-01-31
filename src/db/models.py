@@ -1,14 +1,18 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
-from typing import Optional
+from typing import TYPE_CHECKING
 
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import Base
+
+JSONValue = str | int | float | bool | None | dict[str, "JSONValue"] | list["JSONValue"]
+
+if TYPE_CHECKING:
+    from datetime import datetime
 
 
 class Dataset(Base):
@@ -26,20 +30,16 @@ class Dataset(Base):
     uploaded_at: Mapped[datetime] = mapped_column(
         sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False
     )
-    processed_at: Mapped[Optional[datetime]] = mapped_column(
-        sa.DateTime(timezone=True), nullable=True
-    )
-    row_count: Mapped[Optional[int]] = mapped_column(sa.Integer, nullable=True)
-    error: Mapped[Optional[str]] = mapped_column(sa.Text, nullable=True)
+    processed_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True), nullable=True)
+    row_count: Mapped[int | None] = mapped_column(sa.Integer, nullable=True)
+    error: Mapped[str | None] = mapped_column(sa.Text, nullable=True)
 
     upload_bucket: Mapped[str] = mapped_column(sa.Text, nullable=False)
     upload_key: Mapped[str] = mapped_column(sa.Text, nullable=False)
-    upload_etag: Mapped[Optional[str]] = mapped_column(sa.Text, nullable=True)
+    upload_etag: Mapped[str | None] = mapped_column(sa.Text, nullable=True)
 
-    jobs: Mapped[list[Job]] = relationship(
-        back_populates="dataset", cascade="all, delete-orphan"
-    )
-    report: Mapped[Optional[Report]] = relationship(
+    jobs: Mapped[list[Job]] = relationship(back_populates="dataset", cascade="all, delete-orphan")
+    report: Mapped[Report | None] = relationship(
         back_populates="dataset", uselist=False, cascade="all, delete-orphan"
     )
 
@@ -65,7 +65,7 @@ class Job(Base):
         sa.ForeignKey("datasets.id", ondelete="CASCADE"),
         nullable=False,
     )
-    celery_task_id: Mapped[Optional[str]] = mapped_column(sa.Text, nullable=True)
+    celery_task_id: Mapped[str | None] = mapped_column(sa.Text, nullable=True)
     state: Mapped[str] = mapped_column(sa.Text, nullable=False)
     progress: Mapped[int] = mapped_column(
         sa.Integer, nullable=False, default=0, server_default=sa.text("0")
@@ -73,13 +73,9 @@ class Job(Base):
     queued_at: Mapped[datetime] = mapped_column(
         sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False
     )
-    started_at: Mapped[Optional[datetime]] = mapped_column(
-        sa.DateTime(timezone=True), nullable=True
-    )
-    finished_at: Mapped[Optional[datetime]] = mapped_column(
-        sa.DateTime(timezone=True), nullable=True
-    )
-    error: Mapped[Optional[str]] = mapped_column(sa.Text, nullable=True)
+    started_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True), nullable=True)
+    finished_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True), nullable=True)
+    error: Mapped[str | None] = mapped_column(sa.Text, nullable=True)
 
     dataset: Mapped[Dataset] = relationship(back_populates="jobs")
 
@@ -109,13 +105,13 @@ class Report(Base):
         sa.ForeignKey("datasets.id", ondelete="CASCADE"),
         nullable=False,
     )
-    report_json: Mapped[dict] = mapped_column(postgresql.JSONB, nullable=False)
+    report_json: Mapped[dict[str, JSONValue]] = mapped_column(postgresql.JSONB, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False
     )
     report_bucket: Mapped[str] = mapped_column(sa.Text, nullable=False)
     report_key: Mapped[str] = mapped_column(sa.Text, nullable=False)
-    report_etag: Mapped[Optional[str]] = mapped_column(sa.Text, nullable=True)
+    report_etag: Mapped[str | None] = mapped_column(sa.Text, nullable=True)
 
     dataset: Mapped[Dataset] = relationship(back_populates="report")
 
