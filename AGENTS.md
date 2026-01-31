@@ -36,12 +36,21 @@ All containers on the same compose network; `api` and `worker` reach:
 Standardize these values:
 
 ```
-DATABASE_URL_ASYNC=postgresql+asyncpg://...@postgres:5432/...
-DATABASE_URL_SYNC=postgresql+psycopg://...@postgres:5432/...
-CELERY_BROKER_URL=amqp://...@rabbitmq:5673//
-S3_ENDPOINT_URL=http://minio:9000
-S3_ACCESS_KEY=...
-S3_SECRET_KEY=...
+POSTGRES_USER=dataset
+POSTGRES_PASSWORD=dataset
+POSTGRES_HOST=postgres
+POSTGRES_PORT=5432
+POSTGRES_DB=dataset
+RABBITMQ_USER=dataset
+RABBITMQ_PASSWORD=dataset
+RABBITMQ_HOST=rabbitmq
+RABBITMQ_PORT=5673
+RABBITMQ_VHOST=/
+S3_SCHEME=http
+S3_HOST=minio
+S3_PORT=9000
+S3_ACCESS_KEY=minio
+S3_SECRET_KEY=minio123
 S3_BUCKET_UPLOADS=uploads
 S3_BUCKET_REPORTS=reports
 ```
@@ -313,7 +322,7 @@ Write progress to DB at these points:
 │   ├── worker.Dockerfile
 │   └── minio.Dockerfile
 ├── alembic.ini
-├── alembic/
+├── migrations/
 │   ├── env.py
 │   └── versions/
 ├── src/

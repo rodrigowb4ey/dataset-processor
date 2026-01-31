@@ -1,11 +1,11 @@
-import os
-
 from celery import Celery
+
+from src.core.config import settings
 
 
 celery_app = Celery(
     "dataset_processor",
-    broker=os.environ.get("CELERY_BROKER_URL", "amqp://guest:guest@rabbitmq:5673//"),
+    broker=settings.celery_broker_url,
     include=["src.worker.tasks"],
 )
 
