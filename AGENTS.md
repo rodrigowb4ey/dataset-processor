@@ -29,7 +29,7 @@ Your `docker-compose.yml` must start everything.
 ### Networking
 All containers on the same compose network; `api` and `worker` reach:
 - Postgres at `postgres:5432`
-- RabbitMQ at `rabbitmq:5672`
+- RabbitMQ at `rabbitmq:5673`
 - MinIO at `minio:9000`
 
 ## Environment Variables
@@ -38,7 +38,7 @@ Standardize these values:
 ```
 DATABASE_URL_ASYNC=postgresql+asyncpg://...@postgres:5432/...
 DATABASE_URL_SYNC=postgresql+psycopg://...@postgres:5432/...
-CELERY_BROKER_URL=amqp://...@rabbitmq:5672//
+CELERY_BROKER_URL=amqp://...@rabbitmq:5673//
 S3_ENDPOINT_URL=http://minio:9000
 S3_ACCESS_KEY=...
 S3_SECRET_KEY=...
