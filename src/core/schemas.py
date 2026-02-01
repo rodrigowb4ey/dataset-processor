@@ -1,15 +1,8 @@
-from __future__ import annotations
-
+from datetime import datetime
 from enum import Enum
-from typing import TYPE_CHECKING
+from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
-
-if TYPE_CHECKING:
-    from datetime import datetime
-    from uuid import UUID
-
-JSONValue = str | int | float | bool | None | dict[str, "JSONValue"] | list["JSONValue"]
+from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator
 
 
 class Message(BaseModel):
@@ -100,7 +93,7 @@ class JobList(BaseModel):
 class ReportPublic(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
-    report_json: dict[str, JSONValue]
+    report_json: dict[str, JsonValue]
 
 
 class ReportList(BaseModel):

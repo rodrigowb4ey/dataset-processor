@@ -1,18 +1,13 @@
-from __future__ import annotations
-
 import uuid
-from typing import TYPE_CHECKING
+from datetime import datetime
+from typing import Optional
 
 import sqlalchemy as sa
+from pydantic import JsonValue
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import Base
-
-JSONValue = str | int | float | bool | None | dict[str, "JSONValue"] | list["JSONValue"]
-
-if TYPE_CHECKING:
-    from datetime import datetime
 
 
 class Dataset(Base):
@@ -38,8 +33,8 @@ class Dataset(Base):
     upload_key: Mapped[str] = mapped_column(sa.Text, nullable=False)
     upload_etag: Mapped[str | None] = mapped_column(sa.Text, nullable=True)
 
-    jobs: Mapped[list[Job]] = relationship(back_populates="dataset", cascade="all, delete-orphan")
-    report: Mapped[Report | None] = relationship(
+    jobs: Mapped[list["Job"]] = relationship(back_populates="dataset", cascade="all, delete-orphan")
+    report: Mapped[Optional["Report"]] = relationship(
         back_populates="dataset", uselist=False, cascade="all, delete-orphan"
     )
 
@@ -105,7 +100,7 @@ class Report(Base):
         sa.ForeignKey("datasets.id", ondelete="CASCADE"),
         nullable=False,
     )
-    report_json: Mapped[dict[str, JSONValue]] = mapped_column(postgresql.JSONB, nullable=False)
+    report_json: Mapped[dict[str, JsonValue]] = mapped_column(postgresql.JSONB, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False
     )
