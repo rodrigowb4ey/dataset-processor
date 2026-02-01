@@ -3,13 +3,20 @@ import uuid
 from pathlib import Path
 from typing import Annotated, cast
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, UploadFile, status
 from pydantic import ValidationError
 from sqlalchemy import select
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.config import settings
+from src.core.errors import (
+    DatabaseError,
+    InvalidRequestError,
+    MissingFilenameError,
+    StorageError,
+    UnsupportedMediaTypeError,
+)
 from src.core.schemas import DatasetSchema, DatasetStatus, DatasetUploadPublic
 from src.db.models import Dataset
 from src.db.session import get_async_session
@@ -30,23 +37,14 @@ async def upload_dataset(
     try:
         dataset_input = DatasetSchema(name=name)
     except ValidationError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=exc.errors(),
-        ) from exc
+        raise InvalidRequestError(detail=exc.errors()) from exc
 
     content_type = file.content_type or ""
     if content_type not in ALLOWED_CONTENT_TYPES:
-        raise HTTPException(
-            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
-            detail="Unsupported content type",
-        )
+        raise UnsupportedMediaTypeError()
 
     if not file.filename:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="filename is required",
-        )
+        raise MissingFilenameError()
 
     original_filename = Path(file.filename).name
     checksum_sha256, size_bytes = await compute_sha256_and_size(file)
@@ -61,16 +59,19 @@ async def upload_dataset(
     upload_bucket = settings.s3_bucket_uploads
 
     client = build_minio_client()
-    await asyncio.to_thread(ensure_bucket, client, upload_bucket)
-    upload_etag = await asyncio.to_thread(
-        upload_object,
-        client,
-        upload_bucket,
-        upload_key,
-        file.file,
-        size_bytes,
-        content_type,
-    )
+    try:
+        await asyncio.to_thread(ensure_bucket, client, upload_bucket)
+        upload_etag = await asyncio.to_thread(
+            upload_object,
+            client,
+            upload_bucket,
+            upload_key,
+            file.file,
+            size_bytes,
+            content_type,
+        )
+    except Exception as exc:
+        raise StorageError("Failed to upload dataset to storage.") from exc
 
     dataset = Dataset(
         id=dataset_id,
@@ -87,12 +88,15 @@ async def upload_dataset(
     session.add(dataset)
     try:
         await session.commit()
-    except IntegrityError:
+    except IntegrityError as exc:
         await session.rollback()
         existing = cast("Dataset | None", await session.scalar(checksum_query))
         if existing:
             return existing
-        raise
+        raise DatabaseError("Dataset already exists or violates constraints.") from exc
+    except SQLAlchemyError as exc:
+        await session.rollback()
+        raise DatabaseError() from exc
 
     await session.refresh(dataset)
     return dataset
