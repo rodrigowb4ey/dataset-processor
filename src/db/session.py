@@ -15,12 +15,12 @@ AsyncSessionLocal = async_sessionmaker(async_engine, expire_on_commit=False)
 SessionLocal = sessionmaker(bind=sync_engine, expire_on_commit=False)
 
 
-async def get_async_session() -> AsyncGenerator[AsyncSession, None]:
+async def get_async_session() -> AsyncGenerator[AsyncSession]:
     async with AsyncSessionLocal() as session:
         yield session
 
 
-def get_sync_session() -> Generator[Session, None, None]:
+def get_sync_session() -> Generator[Session]:
     with SessionLocal() as session:
         yield session
 
