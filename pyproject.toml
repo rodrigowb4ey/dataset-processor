@@ -84,3 +84,7 @@ lint = "uv run ruff check"
 lint-fix = "uv run ruff check --fix"
 typecheck = "uv run mypy"
 check = "uv run ruff format --check && uv run ruff check && uv run mypy"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
