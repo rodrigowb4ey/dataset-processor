@@ -69,13 +69,13 @@ line-ending = "auto"
 [tool.mypy]
 python_version = "3.13"
 strict = true
-warn_unused_ignores = true
 warn_unreachable = true
 show_error_codes = true
 pretty = true
 files = ["src", "tests"]
 exclude = "(^migrations/)"
 plugins = ["pydantic.mypy"]
+
 
 [tool.taskipy.tasks]
 format = "uv run ruff format"
@@ -88,3 +88,6 @@ check = "uv run ruff format --check && uv run ruff check && uv run mypy"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+filterwarnings = [
+    "ignore:The @wait_container_is_ready decorator is deprecated:DeprecationWarning:testcontainers\\.core\\.waiting_utils",
+]

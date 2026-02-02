@@ -1,6 +1,7 @@
 import logging
 
 from fastapi import FastAPI, Request
+from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 
 from src.api.routes.datasets import router as datasets_router
@@ -14,7 +15,10 @@ app.include_router(datasets_router)
 
 @app.exception_handler(AppError)
 async def app_error_handler(_request: Request, exc: AppError) -> JSONResponse:
-    return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"detail": jsonable_encoder(exc.detail)},
+    )
 
 
 @app.exception_handler(Exception)

@@ -1,4 +1,3 @@
-import asyncio
 import os
 import secrets
 import time
@@ -11,15 +10,15 @@ import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 from minio import Minio
 from psycopg import sql
-from sqlalchemy import Engine, create_engine
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
     async_sessionmaker,
     create_async_engine,
 )
-from testcontainers.minio import MinioContainer
-from testcontainers.postgres import PostgresContainer
+from sqlalchemy.pool import NullPool
+from testcontainers.minio import MinioContainer  # type: ignore[import-untyped]
+from testcontainers.postgres import PostgresContainer  # type: ignore[import-untyped]
 
 from src.api.main import app
 from src.db.session import get_async_session
@@ -57,10 +56,10 @@ def _wait_for_minio(client: Minio, timeout: float = 10.0) -> None:
 
 
 @pytest.fixture(scope="session")
-def postgres_container() -> Generator[PostgresContainer, None, None]:
+def postgres_container() -> Generator[PostgresContainer]:
     container = PostgresContainer(
         POSTGRES_IMAGE,
-        user=POSTGRES_USER,
+        username=POSTGRES_USER,
         password=POSTGRES_PASSWORD,
         dbname=POSTGRES_DB,
     )
@@ -72,7 +71,7 @@ def postgres_container() -> Generator[PostgresContainer, None, None]:
 
 
 @pytest.fixture(scope="session")
-def db_urls(postgres_container: PostgresContainer) -> Generator[dict[str, str], None, None]:
+def db_urls(postgres_container: PostgresContainer) -> Generator[dict[str, str]]:
     database_url = urlparse(postgres_container.get_connection_url())
     base_url = database_url._replace(scheme="postgresql")
     database_name = base_url.path.removeprefix("/") or "postgres"
@@ -92,45 +91,30 @@ def db_urls(postgres_container: PostgresContainer) -> Generator[dict[str, str], 
         main_conn.close()
 
 
-@pytest.fixture(scope="session")
-def dbengine(db_urls: dict[str, str]) -> Generator[Engine, None, None]:
-    sync_url = _replace_scheme(db_urls["test_url"], "postgresql+psycopg")
-    engine = create_engine(sync_url)
-    try:
-        yield engine
-    finally:
-        engine.dispose()
-
-
-@pytest.fixture(scope="session")
-def async_engine(db_urls: dict[str, str]) -> Generator[AsyncEngine, None, None]:
-    async_url = _replace_scheme(db_urls["test_url"], "postgresql+asyncpg")
-    engine = create_async_engine(async_url)
-    try:
-        yield engine
-    finally:
-        try:
-            asyncio.run(engine.dispose())
-        except RuntimeError:
-            engine.sync_engine.dispose()
-
-
 @pytest_asyncio.fixture()
-async def dbsession(
-    dbengine: Engine, async_engine: AsyncEngine
-) -> AsyncGenerator[AsyncSession, None]:
-    from src.db.base import Base
-    import src.db.models  # noqa: F401
+async def async_engine(db_urls: dict[str, str]) -> AsyncGenerator[AsyncEngine]:
+    async_url = _replace_scheme(db_urls["test_url"], "postgresql+asyncpg")
+    engine = create_async_engine(async_url, poolclass=NullPool)
+    try:
+        yield engine
+    finally:
+        await engine.dispose()
 
-    Base.metadata.create_all(dbengine)
-    sessionmaker = async_sessionmaker(async_engine, expire_on_commit=False)
-    async with sessionmaker() as session:
-        yield session
-    Base.metadata.drop_all(dbengine)
+
+@pytest_asyncio.fixture(autouse=True)
+async def db_schema(async_engine: AsyncEngine) -> AsyncGenerator[None]:
+    import src.db.models  # noqa: F401
+    from src.db.base import Base
+
+    async with async_engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+    yield
+    async with async_engine.begin() as connection:
+        await connection.run_sync(Base.metadata.drop_all)
 
 
 @pytest.fixture(scope="session")
-def minio_container() -> Generator[MinioContainer, None, None]:
+def minio_container() -> Generator[MinioContainer]:
     container = MinioContainer(MINIO_IMAGE)
     container.with_env("MINIO_ROOT_USER", S3_ACCESS_KEY)
     container.with_env("MINIO_ROOT_PASSWORD", S3_SECRET_KEY)
@@ -159,12 +143,15 @@ def minio_client(minio_container: MinioContainer) -> Minio:
 
 @pytest_asyncio.fixture()
 async def client(
-    dbsession: AsyncSession,
     minio_client: Minio,
     monkeypatch: pytest.MonkeyPatch,
-) -> AsyncGenerator[AsyncClient, None]:
-    async def get_session_override() -> AsyncGenerator[AsyncSession, None]:
-        yield dbsession
+    async_engine: AsyncEngine,
+) -> AsyncGenerator[AsyncClient]:
+    sessionmaker = async_sessionmaker(async_engine, expire_on_commit=False)
+
+    async def get_session_override() -> AsyncGenerator[AsyncSession]:
+        async with sessionmaker() as session:
+            yield session
 
     from src.api.routes import datasets as datasets_module
 
