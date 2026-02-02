@@ -27,6 +27,11 @@ class MissingFilenameError(AppError):
     default_detail = "filename is required."
 
 
+class NotFoundError(AppError):
+    status_code = 404
+    default_detail = "Resource not found."
+
+
 class StorageError(AppError):
     status_code = 503
     default_detail = "Storage service error."

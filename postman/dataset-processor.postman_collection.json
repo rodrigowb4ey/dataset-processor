@@ -38,6 +38,14 @@
             },
             "url": "{{base_url}}/datasets"
           }
+        },
+        {
+          "name": "Get dataset",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/datasets/{{dataset_id}}"
+          }
         }
       ]
     }
@@ -46,6 +54,10 @@
     {
       "key": "base_url",
       "value": "http://localhost:8000"
+    },
+    {
+      "key": "dataset_id",
+      "value": ""
     }
   ]
 }

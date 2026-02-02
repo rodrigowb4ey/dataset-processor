@@ -14,11 +14,12 @@ from src.core.errors import (
     DatabaseError,
     InvalidRequestError,
     MissingFilenameError,
+    NotFoundError,
     StorageError,
     UnsupportedMediaTypeError,
 )
-from src.core.schemas import DatasetSchema, DatasetStatus, DatasetUploadPublic
-from src.db.models import Dataset
+from src.core.schemas import DatasetPublic, DatasetSchema, DatasetStatus, DatasetUploadPublic
+from src.db.models import Dataset, Job, Report
 from src.db.session import get_async_session
 from src.services.storage import build_minio_client, ensure_bucket, upload_object
 from src.utils.checksum import compute_sha256_and_size
@@ -100,3 +101,39 @@ async def upload_dataset(
 
     await session.refresh(dataset)
     return dataset
+
+
+@router.get("/{dataset_id}", response_model=DatasetPublic)
+async def get_dataset(
+    session: Annotated[AsyncSession, Depends(get_async_session)],
+    dataset_id: uuid.UUID,
+) -> DatasetPublic:
+    try:
+        dataset = cast(
+            "Dataset | None",
+            await session.scalar(select(Dataset).where(Dataset.id == dataset_id)),
+        )
+        if not dataset:
+            raise NotFoundError("Dataset not found.")
+
+        latest_job_id = await session.scalar(
+            select(Job.id)
+            .where(Job.dataset_id == dataset_id)
+            .order_by(Job.queued_at.desc())
+            .limit(1)
+        )
+        report_id = await session.scalar(
+            select(Report.id).where(Report.dataset_id == dataset_id).limit(1)
+        )
+    except SQLAlchemyError as exc:
+        raise DatabaseError() from exc
+
+    return DatasetPublic(
+        id=dataset.id,
+        name=dataset.name,
+        status=dataset.status,
+        row_count=dataset.row_count,
+        latest_job_id=latest_job_id,
+        report_available=bool(report_id),
+        error=dataset.error,
+    )
