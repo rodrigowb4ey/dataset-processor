@@ -1,15 +1,18 @@
 import hashlib
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from uuid import UUID, uuid4
 
 import pytest
 from httpx import AsyncClient
 from minio import Minio
+from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from src.core.config import settings
 from src.db.models import Dataset, Job, Report
+from src.worker.celery_app import celery_app
 
 
 async def test_upload_csv_success(
@@ -243,7 +246,7 @@ async def test_get_dataset_with_jobs_and_report(
     dataset_id = UUID(upload.json()["id"])
 
     sessionmaker = async_sessionmaker(async_engine, expire_on_commit=False)
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     async with sessionmaker() as session:
         job_earlier = Job(dataset_id=dataset_id, state="queued", queued_at=now)
         job_latest = Job(
@@ -300,3 +303,237 @@ async def test_get_dataset_failed_includes_error(
     assert payload["status"] == "failed"
     assert payload["row_count"] == 0
     assert payload["error"] == "Parse failed"
+
+
+async def test_process_dataset_enqueues_job(
+    client: AsyncClient,
+    dataset_name: str,
+    sample_csv_bytes: bytes,
+    async_engine: AsyncEngine,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    upload = await client.post(
+        "/datasets",
+        data={"name": dataset_name},
+        files={"file": ("data.csv", sample_csv_bytes, "text/csv")},
+    )
+    dataset_id = UUID(upload.json()["id"])
+
+    monkeypatch.setattr(
+        celery_app,
+        "send_task",
+        lambda *_args, **_kwargs: SimpleNamespace(id="task-123"),
+    )
+
+    response = await client.post(f"/datasets/{dataset_id}/process")
+
+    assert response.status_code == 202
+    payload = response.json()
+    assert payload["dataset_id"] == str(dataset_id)
+    assert payload["state"] == "queued"
+    assert payload["progress"] == 0
+
+    sessionmaker = async_sessionmaker(async_engine, expire_on_commit=False)
+    async with sessionmaker() as session:
+        jobs = (await session.scalars(select(Job).where(Job.dataset_id == dataset_id))).all()
+
+    assert len(jobs) == 1
+    job = jobs[0]
+    assert payload["job_id"] == str(job.id)
+    assert job.state == "queued"
+    assert job.progress == 0
+    assert job.celery_task_id == "task-123"
+
+
+async def test_process_dataset_returns_active_job(
+    client: AsyncClient,
+    dataset_name: str,
+    sample_csv_bytes: bytes,
+    async_engine: AsyncEngine,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    upload = await client.post(
+        "/datasets",
+        data={"name": dataset_name},
+        files={"file": ("data.csv", sample_csv_bytes, "text/csv")},
+    )
+    dataset_id = UUID(upload.json()["id"])
+
+    sessionmaker = async_sessionmaker(async_engine, expire_on_commit=False)
+    now = datetime.now(UTC)
+    async with sessionmaker() as session:
+        active_job = Job(dataset_id=dataset_id, state="started", queued_at=now)
+        session.add(active_job)
+        await session.commit()
+
+    def fail_send_task(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("send_task should not be called")
+
+    monkeypatch.setattr(celery_app, "send_task", fail_send_task)
+
+    response = await client.post(f"/datasets/{dataset_id}/process")
+
+    assert response.status_code == 202
+    payload = response.json()
+    assert payload["job_id"] == str(active_job.id)
+
+    async with sessionmaker() as session:
+        jobs = (await session.scalars(select(Job).where(Job.dataset_id == dataset_id))).all()
+        assert len(jobs) == 1
+
+
+async def test_process_dataset_done_returns_latest_job(
+    client: AsyncClient,
+    dataset_name: str,
+    sample_csv_bytes: bytes,
+    async_engine: AsyncEngine,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    upload = await client.post(
+        "/datasets",
+        data={"name": dataset_name},
+        files={"file": ("data.csv", sample_csv_bytes, "text/csv")},
+    )
+    dataset_id = UUID(upload.json()["id"])
+
+    sessionmaker = async_sessionmaker(async_engine, expire_on_commit=False)
+    now = datetime.now(UTC)
+    async with sessionmaker() as session:
+        dataset = await session.get(Dataset, dataset_id)
+        assert dataset is not None
+        dataset.status = "done"
+        job_earlier = Job(dataset_id=dataset_id, state="success", queued_at=now)
+        job_latest = Job(
+            dataset_id=dataset_id,
+            state="success",
+            queued_at=now + timedelta(seconds=5),
+        )
+        report = Report(
+            dataset_id=dataset_id,
+            report_json={"rows": 2},
+            report_bucket=settings.s3_bucket_reports,
+            report_key=f"datasets/{dataset_id}/report/report.json",
+            report_etag="etag",
+        )
+        session.add_all([job_earlier, job_latest, report])
+        await session.commit()
+
+    def fail_send_task(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("send_task should not be called")
+
+    monkeypatch.setattr(celery_app, "send_task", fail_send_task)
+
+    response = await client.post(f"/datasets/{dataset_id}/process")
+
+    assert response.status_code == 202
+    payload = response.json()
+    assert payload["job_id"] == str(job_latest.id)
+
+    async with sessionmaker() as session:
+        jobs = (await session.scalars(select(Job).where(Job.dataset_id == dataset_id))).all()
+        assert len(jobs) == 2
+
+
+async def test_process_dataset_missing_returns_404(client: AsyncClient) -> None:
+    response = await client.post(f"/datasets/{uuid4()}/process")
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Dataset not found."
+
+
+async def test_process_dataset_done_with_report_but_no_jobs(
+    client: AsyncClient,
+    dataset_name: str,
+    sample_csv_bytes: bytes,
+    async_engine: AsyncEngine,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    upload = await client.post(
+        "/datasets",
+        data={"name": dataset_name},
+        files={"file": ("data.csv", sample_csv_bytes, "text/csv")},
+    )
+    dataset_id = UUID(upload.json()["id"])
+
+    sessionmaker = async_sessionmaker(async_engine, expire_on_commit=False)
+    async with sessionmaker() as session:
+        dataset = await session.get(Dataset, dataset_id)
+        assert dataset is not None
+        dataset.status = "done"
+        report = Report(
+            dataset_id=dataset_id,
+            report_json={"rows": 2},
+            report_bucket=settings.s3_bucket_reports,
+            report_key=f"datasets/{dataset_id}/report/report.json",
+            report_etag="etag",
+        )
+        session.add(report)
+        await session.commit()
+
+    def fail_send_task(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("send_task should not be called")
+
+    monkeypatch.setattr(celery_app, "send_task", fail_send_task)
+
+    response = await client.post(f"/datasets/{dataset_id}/process")
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == "Dataset is done but no job records were found."
+
+
+async def test_process_dataset_enqueue_failure_marks_job_failed(
+    client: AsyncClient,
+    dataset_name: str,
+    sample_csv_bytes: bytes,
+    async_engine: AsyncEngine,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    upload = await client.post(
+        "/datasets",
+        data={"name": dataset_name},
+        files={"file": ("data.csv", sample_csv_bytes, "text/csv")},
+    )
+    dataset_id = UUID(upload.json()["id"])
+
+    def fail_send_task(*_args: object, **_kwargs: object) -> None:
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(celery_app, "send_task", fail_send_task)
+
+    response = await client.post(f"/datasets/{dataset_id}/process")
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == "Failed to enqueue task."
+
+    sessionmaker = async_sessionmaker(async_engine, expire_on_commit=False)
+    async with sessionmaker() as session:
+        jobs = (await session.scalars(select(Job).where(Job.dataset_id == dataset_id))).all()
+
+    assert len(jobs) == 1
+    job = jobs[0]
+    assert job.state == "failure"
+    assert job.error == "Failed to enqueue task."
+
+
+async def test_process_dataset_database_error_returns_503(
+    client: AsyncClient,
+    dataset_name: str,
+    sample_csv_bytes: bytes,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    upload = await client.post(
+        "/datasets",
+        data={"name": dataset_name},
+        files={"file": ("data.csv", sample_csv_bytes, "text/csv")},
+    )
+    dataset_id = upload.json()["id"]
+
+    async def failing_commit(_self: AsyncSession) -> None:
+        raise SQLAlchemyError("boom")
+
+    monkeypatch.setattr(AsyncSession, "commit", failing_commit)
+
+    response = await client.post(f"/datasets/{dataset_id}/process")
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == "Database error."

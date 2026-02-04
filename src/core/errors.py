@@ -42,6 +42,11 @@ class DatabaseError(AppError):
     default_detail = "Database error."
 
 
+class QueueError(AppError):
+    status_code = 503
+    default_detail = "Failed to enqueue task."
+
+
 class UnexpectedError(AppError):
     status_code = 500
     default_detail = "An unexpected error occurred. Please try again later."
