@@ -14,21 +14,60 @@ Async dataset processing service where users upload CSV/JSON files, enqueue back
 ## Prerequisites
 
 - Docker + Docker Compose
+- `uv` (used to run task commands)
 - `curl`
 - `jq` (optional, used in the examples)
+
+## Developer Commands (Taskipy)
+
+List all available tasks:
+
+```bash
+uv run task --list
+```
+
+Most common workflows:
+
+```bash
+# quality gates
+uv run task qa
+
+# tests
+uv run task test-fast
+uv run task test
+uv run task test-e2e
+
+# combined checks
+uv run task verify
+uv run task verify-all
+
+# local stack
+uv run task stack-up
+uv run task stack-rebuild
+uv run task stack-ps
+uv run task stack-logs
+uv run task stack-down
+
+# migrations (compose-first)
+uv run task migrate
+uv run task db-current
+uv run task db-history
+uv run task db-downgrade
+uv run task db-revision -m "describe your change"
+```
 
 ## Run the Stack
 
 1. Start everything:
 
 ```bash
-docker compose up -d --build
+uv run task stack-rebuild
 ```
 
 2. Run migrations:
 
 ```bash
-docker compose exec api alembic upgrade head
+uv run task migrate
 ```
 
 3. Quick health check:
@@ -162,11 +201,11 @@ Collection variables:
 ## Running Tests
 
 ```bash
-uv run pytest
+uv run task test
 ```
 
 Run only e2e tests:
 
 ```bash
-uv run pytest -m e2e
+uv run task test-e2e
 ```

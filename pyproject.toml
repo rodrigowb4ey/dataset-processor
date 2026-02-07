@@ -83,7 +83,27 @@ format-check = "uv run ruff format --check"
 lint = "uv run ruff check"
 lint-fix = "uv run ruff check --fix"
 typecheck = "uv run mypy"
-check = "uv run ruff format --check && uv run ruff check && uv run mypy"
+qa = "uv run task format-check && uv run task lint && uv run task typecheck"
+check = "uv run task qa"
+
+test = "uv run pytest"
+test-fast = "uv run pytest -m 'not e2e'"
+test-e2e = "uv run pytest -m e2e"
+verify = "uv run task qa && uv run task test-fast"
+verify-all = "uv run task qa && uv run task test"
+
+stack-up = "docker compose up -d"
+stack-rebuild = "docker compose up -d --build"
+stack-down = "docker compose down"
+stack-ps = "docker compose ps"
+stack-logs = "docker compose logs -f api worker"
+
+db-upgrade = "docker compose run --rm api alembic upgrade head"
+db-downgrade = "docker compose run --rm api alembic downgrade -1"
+db-current = "docker compose run --rm api alembic current"
+db-history = "docker compose run --rm api alembic history"
+db-revision = "docker compose run --rm api alembic revision --autogenerate"
+migrate = "uv run task db-upgrade"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
