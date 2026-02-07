@@ -1,41 +1,59 @@
 # AGENTS
 
 ## Overview
-Build an async dataset processor + report builder where users can upload datasets (CSV/JSON), trigger background processing, poll job progress, and fetch a generated report.
+This project is an async dataset processor + report builder.
+
+Users can:
+- upload CSV/JSON datasets
+- trigger background processing
+- poll job progress
+- fetch generated reports
+
+Current status: the core functional flow is implemented and tested, including true async end-to-end coverage with a real broker and worker in tests.
 
 ## Stack
-- FastAPI (async endpoints)
+- FastAPI (async API)
 - SQLAlchemy 2.0
-- API uses async engine (asyncpg)
-- Worker uses sync engine (psycopg) to keep Celery tasks straightforward
-- Postgres (source of truth: datasets, jobs, reports)
+- API uses async engine (`asyncpg`)
+- Worker uses sync engine (`psycopg`)
+- Postgres (source of truth for datasets/jobs/reports)
 - RabbitMQ (Celery broker)
-- MinIO (object storage for datasets + reports)
+- MinIO (object storage)
+- Alembic (migrations)
+- Pytest + Testcontainers (testing)
 
-## Docker Compose Requirements
-Your `docker-compose.yml` must start everything.
+## Runtime (Docker Compose)
 
 ### Services
 - `api` (FastAPI + uvicorn)
 - `worker` (Celery worker)
 - `postgres`
 - `rabbitmq` (management UI enabled)
-- `minio` (optionally add `mc` init container to create buckets)
+- `minio`
+- `minio-mc` (init container that creates buckets)
 
 ### Volumes
-- Postgres data volume
-- MinIO data volume
+- `postgres_data`
+- `minio_data`
 
-### Networking
-All containers on the same compose network; `api` and `worker` reach:
-- Postgres at `postgres:5432`
-- RabbitMQ at `rabbitmq:5673`
-- MinIO at `minio:9000`
+### Networking / Ports
+Internal service hosts used by app/worker:
+- Postgres: `postgres:5432`
+- RabbitMQ: `rabbitmq:5673`
+- MinIO: `minio:9000`
+
+Host ports exposed by compose:
+- API: `8000`
+- Postgres: `5432`
+- RabbitMQ AMQP: `5673`
+- RabbitMQ UI: `15672`
+- MinIO API: `9000`
+- MinIO Console: `9001`
 
 ## Environment Variables
-Standardize these values:
+Canonical env values used by this project:
 
-```
+```env
 POSTGRES_USER=dataset
 POSTGRES_PASSWORD=dataset
 POSTGRES_HOST=postgres
@@ -58,63 +76,50 @@ S3_BUCKET_REPORTS=reports
 ## Storage Contract (MinIO)
 
 ### Buckets
-- `uploads` — raw dataset objects
-- `reports` — generated report objects
+- `uploads` (raw dataset objects)
+- `reports` (generated report objects)
 
 ### Object Key Conventions
 Upload object key:
 
-```
+```text
 datasets/{dataset_id}/source/{original_filename}
 ```
 
 Report object key:
 
-```
+```text
 datasets/{dataset_id}/report/report.json
 ```
 
-Optionally: `datasets/{dataset_id}/report/report.html`.
-
-Why conventions matter: easier debugging and reproducible reports.
-
 ## Database Schema (Postgres)
-Use UUID PKs and TIMESTAMPTZ. Store report payload in JSONB.
 
-### datasets
-Represents an uploaded dataset and its lifecycle.
-
-Columns:
+### `datasets`
 - `id` UUID PK
 - `name` text not null
 - `original_filename` text not null
 - `content_type` text not null
-- `status` text check in (`uploaded`, `processing`, `done`, `failed`)
-- `checksum_sha256` text not null
+- `status` in (`uploaded`, `processing`, `done`, `failed`)
+- `checksum_sha256` text unique not null
 - `size_bytes` bigint not null
 - `uploaded_at` timestamptz default now()
 - `processed_at` timestamptz nullable
 - `row_count` int nullable
 - `error` text nullable
-
-Object storage fields:
-- `upload_bucket` text not null (e.g. `uploads`)
+- `upload_bucket` text not null
 - `upload_key` text not null
-- `upload_etag` text nullable (store if you want; useful for debugging)
+- `upload_etag` text nullable
 
 Indexes:
-- UNIQUE(`checksum_sha256`) (optional but recommended for dedup)
-- INDEX(`status`)
-- INDEX(`uploaded_at`)
+- unique `checksum_sha256`
+- index `status`
+- index `uploaded_at`
 
-### jobs
-Tracks background processing attempts and progress.
-
-Columns:
+### `jobs`
 - `id` UUID PK
 - `dataset_id` UUID FK -> `datasets.id` (cascade delete)
 - `celery_task_id` text nullable
-- `state` text check in (`queued`, `started`, `retrying`, `success`, `failure`)
+- `state` in (`queued`, `started`, `retrying`, `success`, `failure`)
 - `progress` int 0..100 default 0
 - `queued_at` timestamptz default now()
 - `started_at` timestamptz nullable
@@ -122,195 +127,123 @@ Columns:
 - `error` text nullable
 
 Indexes:
-- INDEX(`dataset_id`)
-- INDEX(`state`)
-- INDEX(`queued_at`)
+- index `dataset_id`
+- index `state`
+- index `queued_at`
+- partial unique index `uq_jobs_active_dataset` on `dataset_id` where state in (`queued`, `started`, `retrying`)
 
-### reports
-Stores final report metadata and JSON output.
-
-Columns:
+### `reports`
 - `id` UUID PK
-- `dataset_id` UUID UNIQUE FK -> `datasets.id`
-- `report_json` jsonb not null
+- `dataset_id` UUID unique FK -> `datasets.id`
+- `report_json` JSONB not null
 - `created_at` timestamptz default now()
-
-Object storage fields:
-- `report_bucket` text not null (e.g. `reports`)
+- `report_bucket` text not null
 - `report_key` text not null
 - `report_etag` text nullable
 
 Indexes:
-- INDEX(`created_at`)
+- index `created_at`
 
-## API Contract
+## API Contract (Current)
 
-### 1) Upload dataset
-`POST /datasets` (multipart/form-data)
+### Health
+- `GET /`
+  - returns `{"Hello":"World"}`
 
-Fields:
-- `name`: string
-- `file`: UploadFile (CSV/JSON)
+### Datasets
+1. `POST /datasets` (multipart form-data: `name`, `file`)
+   - allowed content types: `text/csv`, `application/json`
+   - computes SHA256 + size
+   - uploads to MinIO uploads bucket
+   - writes dataset row with `status=uploaded`
+   - idempotent by checksum (returns existing dataset)
+   - response model: `DatasetUploadPublic`
+   - status: `201`
+
+2. `GET /datasets/{dataset_id}`
+   - returns dataset summary with `latest_job_id` and `report_available`
+   - response model: `DatasetPublic`
+
+3. `POST /datasets/{dataset_id}/process`
+   - idempotent enqueue behavior:
+     - if active job exists (`queued|started|retrying`), returns it
+     - if dataset is `done` and report exists, returns latest job
+     - if dataset is `done` and report exists but no prior job, creates synthetic success job
+     - else creates new queued job and enqueues Celery task
+   - saves `celery_task_id`
+   - response model: `JobEnqueuePublic`
+   - status: `202`
+
+4. `GET /datasets/{dataset_id}/report`
+   - returns stored JSON report from DB (`reports.report_json`)
+   - returns `404` if report is not ready
+
+### Jobs
+5. `GET /jobs`
+   - returns all jobs in descending `queued_at` order
+   - response model: `JobList`
+
+6. `GET /jobs/{job_id}`
+   - returns job details
+   - response model: `JobPublic`
+   - returns `404` when missing
+
+## Background Processing (Celery)
+
+Task name: `process_dataset(dataset_id, job_id)`
 
 Behavior:
-- Validate content type (`text/csv`, `application/json`).
-- Stream upload into MinIO `uploads` bucket.
-- Compute sha256 while streaming (or before upload if you prefer).
-- Insert into `datasets` with:
-  - `status=uploaded`
-  - `upload_bucket`, `upload_key`, `checksum_sha256`, `size_bytes`
-
-Response (201):
-
-```
-{
-  "id": "uuid",
-  "name": "January sales",
-  "status": "uploaded",
-  "checksum_sha256": "...",
-  "size_bytes": 12345
-}
-```
-
-Idempotency option (recommended):
-- If `checksum_sha256` already exists, return the existing dataset (200 or 201; pick one and document it).
-
-### 2) Get dataset
-`GET /datasets/{dataset_id}`
-
-Response (200):
-
-```
-{
-  "id": "uuid",
-  "name": "...",
-  "status": "processing",
-  "row_count": 1000,
-  "latest_job_id": "uuid-or-null",
-  "report_available": false,
-  "error": null
-}
-```
-
-### 3) Enqueue processing (idempotent)
-`POST /datasets/{dataset_id}/process`
-
-Rules:
-- If dataset is `done` and report exists, return existing latest job (or create a synthetic success job).
-- If there is an active job (`queued|started|retrying`), return it (no duplicates).
-- Else:
-  - create a new job (`queued`, `progress=0`)
-  - enqueue Celery task `process_dataset(dataset_id, job_id)`
-  - save `celery_task_id`
-
-Response (202):
-
-```
-{ "job_id": "uuid", "dataset_id": "uuid", "state": "queued", "progress": 0 }
-```
-
-### 4) Poll job
-`GET /jobs/{job_id}`
-
-Response (200):
-
-```
-{
-  "id": "uuid",
-  "dataset_id": "uuid",
-  "state": "started",
-  "progress": 60,
-  "error": null,
-  "queued_at": "...",
-  "started_at": "...",
-  "finished_at": null
-}
-```
-
-### 5) Get report (JSON)
-`GET /datasets/{dataset_id}/report`
-
-Returns the JSON report (either read `reports.report_json` from DB or stream from MinIO).
-
-Response:
-- `200` JSON body (report)
-- `404` if not ready
-
-## Background Job Behavior (Celery)
-Task: `process_dataset(dataset_id, job_id)`
-
-Worker must:
-- Fetch dataset row from Postgres.
-- Download the dataset object from MinIO (uploads bucket/key).
-- Parse and validate:
-  - CSV -> `DictReader`
-  - JSON -> list of objects
-- Compute:
-  - `row_count`
+- fetch dataset
+- set job/dataset processing state
+- download dataset object from MinIO
+- parse:
+  - CSV via `csv.DictReader`
+  - JSON must be a list of objects
+- compute:
+  - row count
   - null counts per field
-  - numeric min/max/mean (for numeric-ish fields)
+  - numeric stats (`min`, `max`, `mean`) for numeric-only fields
   - anomalies:
-    - duplicates count
-    - outliers using IQR (store count plus some examples)
-- Write report:
-  - upload `report.json` to MinIO reports bucket using the report key convention
-  - insert/update `reports` row with `report_json`, `report_bucket`, `report_key`, `etag`
-- Update statuses:
-  - dataset -> `done`, set `processed_at`
-  - job -> `success`, `progress=100`
+    - duplicate row count
+    - IQR outliers + examples
+- upload report JSON to MinIO reports bucket
+- upsert report row in DB
+- finalize dataset and job
 
-### Progress Milestones
-Write progress to DB at these points:
-- 5%: started (dataset -> `processing`)
-- 25%: downloaded + parsed
-- 60%: stats computed
-- 85%: anomalies computed
-- 100%: report uploaded + DB updated
+Progress milestones:
+- 5: started / dataset processing
+- 25: parsed
+- 60: stats computed
+- 85: anomalies computed
+- 100: report persisted + done
 
-### Retry Rules
-- Retry on transient errors (MinIO connection hiccups, Postgres connection, network).
-- Do not retry on invalid format or schema (fail fast).
+Retry rules:
+- retryable: `OperationalError`, `OSError`, `S3Error`
+- non-retryable: invalid dataset format/schema/content
+- max retries: 3 (exponential backoff with cap)
 
-## Definition of Done (Acceptance Criteria)
+## Testing (Current)
 
-### Functional
-- docker compose up starts `api` + `worker` + `postgres` + `rabbitmq` + `minio`
-- Upload endpoint:
-  - streams file into MinIO
-  - stores dataset row (including bucket/key/checksum)
-- Process endpoint:
-  - creates job row
-  - enqueues Celery task
-- Worker:
-  - downloads object from MinIO
-  - processes it
-  - uploads report to MinIO
-  - writes report metadata + JSON to Postgres
-  - updates job progress throughout
-- Report endpoint returns report JSON once ready
-- Failure path: invalid dataset results in job failure + dataset failed + error stored
-- Idempotency: no duplicate concurrent jobs; "already done" does not reprocess unless you later add `?force=true`
+Implemented test coverage:
+- API route tests
+  - `tests/api/routes/test_datasets.py`
+  - `tests/api/routes/test_jobs.py`
+- Service tests
+  - `tests/services/test_datasets_service.py`
+  - `tests/services/test_storage.py`
+- Processing unit tests
+  - `tests/processing/test_parsers.py`
+  - `tests/processing/test_stats.py`
+  - `tests/processing/test_anomalies.py`
+- Worker task tests
+  - `tests/worker/test_tasks.py`
+- True async e2e tests
+  - `tests/e2e/test_async_flow.py`
+  - runs with real RabbitMQ + Celery test worker + Postgres + MinIO
 
-### Quality
-- End-to-end tests: upload -> process -> poll until success -> fetch report
-- End-to-end tests: invalid upload -> process -> failure -> error visible
-- README:
-  - how to run the stack
-  - how to curl upload/process/poll/report
-  - where to see RabbitMQ and MinIO UIs
+## Current Project Structure
 
-## Recommended Milestone Order
-1. Compose stack boots all services.
-2. Alembic migrations + models.
-3. Upload -> MinIO + dataset row.
-4. Process endpoint creates job + enqueues.
-5. Worker downloads from MinIO, writes dummy report to MinIO + DB.
-6. Add real parsing + stats + anomalies + progress updates.
-7. Tighten idempotency + retries.
-8. Tests + README.
-
-## Target Final Structure
-```
+```text
 .
 ├── AGENTS.md
 ├── README.md
@@ -319,52 +252,67 @@ Write progress to DB at these points:
 ├── docker-compose.yml
 ├── docker/
 │   ├── api.Dockerfile
-│   ├── worker.Dockerfile
-│   └── minio.Dockerfile
+│   └── worker.Dockerfile
 ├── alembic.ini
 ├── migrations/
 │   ├── env.py
 │   └── versions/
+│       ├── 20260131_000001_create_datasets_jobs_reports.py
+│       └── 20260206_000002_add_active_job_unique_index.py
+├── postman/
+│   └── dataset-processor.postman_collection.json
 ├── src/
-│   ├── __init__.py
 │   ├── api/
 │   │   ├── main.py
-│   │   ├── deps.py
 │   │   └── routes/
 │   │       ├── datasets.py
 │   │       ├── jobs.py
 │   │       └── reports.py
 │   ├── core/
 │   │   ├── config.py
-│   │   └── logging.py
+│   │   ├── errors.py
+│   │   └── schemas.py
 │   ├── db/
 │   │   ├── base.py
-│   │   ├── session.py
-│   │   └── models.py
-│   ├── schemas/
-│   │   ├── dataset.py
-│   │   ├── job.py
-│   │   └── report.py
-│   ├── services/
-│   │   ├── storage.py
-│   │   ├── datasets.py
-│   │   └── reports.py
+│   │   ├── models.py
+│   │   └── session.py
 │   ├── processing/
 │   │   ├── parsers.py
 │   │   ├── stats.py
 │   │   └── anomalies.py
-│   ├── worker/
-│   │   ├── celery_app.py
-│   │   └── tasks.py
-│   └── utils/
-│           ├── checksum.py
-│           └── streaming.py
+│   ├── services/
+│   │   ├── datasets.py
+│   │   └── storage.py
+│   ├── utils/
+│   │   └── checksum.py
+│   └── worker/
+│       ├── celery_app.py
+│       └── tasks.py
 └── tests/
+    ├── api/
     ├── e2e/
-    └── unit/
+    ├── processing/
+    ├── services/
+    └── worker/
 ```
 
-## Stretch
+## Stretch Roadmap (Future)
+
 - Presigned uploads
+  - add endpoint(s) that issue short-lived MinIO signed URLs
+  - allow clients to upload directly to object storage
+  - add completion/verification step before dataset is considered `uploaded`
+
 - Celery beat cleanup
+  - add `beat` service and periodic cleanup tasks
+  - detect and mark stale jobs as failed
+  - optional retention cleanup for old jobs/reports/orphaned objects
+
 - WebSocket progress
+  - add WS endpoint (for example `/ws/jobs/{job_id}`)
+  - push job state/progress updates in real time
+  - keep polling endpoints as fallback
+
+## Notes
+- `POST /datasets/{dataset_id}/process?force=true` is not implemented.
+- Report retrieval currently reads from DB JSON payload (not streaming from MinIO).
