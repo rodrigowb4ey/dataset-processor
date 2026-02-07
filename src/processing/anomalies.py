@@ -1,9 +1,12 @@
+"""Anomaly detection utilities for duplicate rows and numeric outliers."""
+
 import json
 from collections import defaultdict
 from typing import Any
 
 
 def _to_float(value: Any) -> float:
+    """Convert numeric-like values to float and reject non-numeric values."""
     if isinstance(value, bool):
         raise ValueError("bool is not numeric")
     if isinstance(value, (int, float)):
@@ -14,6 +17,7 @@ def _to_float(value: Any) -> float:
 
 
 def _quantile(sorted_values: list[float], q: float) -> float:
+    """Return an interpolated quantile from sorted values."""
     if not sorted_values:
         raise ValueError("empty sequence")
     if len(sorted_values) == 1:
@@ -26,6 +30,7 @@ def _quantile(sorted_values: list[float], q: float) -> float:
 
 
 def _compute_duplicate_count(rows: list[dict[str, Any]]) -> int:
+    """Count duplicate rows based on canonical JSON serialization."""
     seen: set[str] = set()
     duplicates = 0
     for row in rows:
@@ -38,6 +43,7 @@ def _compute_duplicate_count(rows: list[dict[str, Any]]) -> int:
 
 
 def compute_anomalies(rows: list[dict[str, Any]], max_examples: int = 5) -> dict[str, Any]:
+    """Compute duplicate count and IQR outliers per numeric field."""
     numeric_by_field: dict[str, list[tuple[int, float]]] = defaultdict(list)
 
     for idx, row in enumerate(rows):

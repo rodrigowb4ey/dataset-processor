@@ -1,0 +1,48 @@
+site_name: Dataset Processor
+site_description: Async dataset processor and report builder.
+theme:
+  name: material
+  features:
+    - navigation.instant
+    - navigation.sections
+    - navigation.top
+    - content.code.copy
+
+nav:
+  - Home: index.md
+  - Architecture: architecture.md
+  - API Workflow: api-workflow.md
+  - Processing Pipeline: processing-pipeline.md
+  - Logging: logging.md
+  - Operations: operations.md
+  - API Reference:
+      - Overview: reference/index.md
+      - API: reference/api.md
+      - Core: reference/core.md
+      - DB: reference/db.md
+      - Services: reference/services.md
+      - Processing: reference/processing.md
+      - Worker: reference/worker.md
+      - Utils: reference/utils.md
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          paths:
+            - .
+          options:
+            show_source: false
+            docstring_style: google
+            heading_level: 2
+            merge_init_into_class: true
+            show_root_heading: true
+            members_order: source
+
+markdown_extensions:
+  - admonition
+  - toc:
+      permalink: true
+
+strict: true

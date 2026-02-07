@@ -1,3 +1,5 @@
+"""SQLAlchemy ORM models for datasets, jobs, and reports."""
+
 import uuid
 from datetime import datetime
 from typing import Optional
@@ -10,6 +12,8 @@ from .base import Base
 
 
 class Dataset(Base):
+    """Dataset metadata persisted after uploads."""
+
     __tablename__ = "datasets"
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -49,6 +53,8 @@ class Dataset(Base):
 
 
 class Job(Base):
+    """Background processing job metadata."""
+
     __tablename__ = "jobs"
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -95,6 +101,8 @@ class Job(Base):
 
 
 class Report(Base):
+    """Metadata for generated report objects in storage."""
+
     __tablename__ = "reports"
 
     id: Mapped[uuid.UUID] = mapped_column(

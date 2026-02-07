@@ -31,6 +31,7 @@ Most common workflows:
 ```bash
 # quality gates
 uv run task qa
+uv run task check
 
 # tests
 uv run task test
@@ -43,6 +44,10 @@ uv run task test-fast  # alias for test
 # combined checks
 uv run task verify
 uv run task verify-all
+
+# docs
+uv run task docs-serve
+uv run task docs-build
 
 # local stack
 uv run task stack-up
@@ -57,6 +62,35 @@ uv run task db-current
 uv run task db-history
 uv run task db-downgrade
 uv run task db-revision -m "describe your change"
+```
+
+## Logging
+
+The API and worker use structured logging with request/task context propagation.
+
+Supported environment variables:
+
+- `LOG_LEVEL` (default: `INFO`)
+- `LOG_FORMAT` (`console` or `json`, default: `console`)
+- `SERVICE_NAME` (default: `dataset-processor`)
+- `ENVIRONMENT` (default: `local`)
+
+Set `LOG_FORMAT=json` in non-local environments for machine-readable logs.
+
+## Documentation
+
+This project uses MkDocs Material + mkdocstrings for documentation.
+
+Serve docs locally:
+
+```bash
+uv run task docs-serve
+```
+
+Build docs in strict mode:
+
+```bash
+uv run task docs-build
 ```
 
 ## Run the Stack

@@ -1,3 +1,5 @@
+"""Database engine and session factories for async API and sync worker."""
+
 from collections.abc import AsyncGenerator, Generator
 from typing import Annotated
 
@@ -16,11 +18,13 @@ SessionLocal = sessionmaker(bind=sync_engine, expire_on_commit=False)
 
 
 async def get_async_session() -> AsyncGenerator[AsyncSession]:
+    """Yield an async database session for request handlers."""
     async with AsyncSessionLocal() as session:
         yield session
 
 
 def get_sync_session() -> Generator[Session]:
+    """Yield a sync database session for worker operations."""
     with SessionLocal() as session:
         yield session
 

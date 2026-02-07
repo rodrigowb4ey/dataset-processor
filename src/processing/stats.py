@@ -1,8 +1,11 @@
+"""Statistics computation utilities for normalized dataset rows."""
+
 from collections import defaultdict
 from typing import Any
 
 
 def _is_null(value: Any) -> bool:
+    """Return whether a value should be treated as null."""
     if value is None:
         return True
     if isinstance(value, str):
@@ -11,6 +14,7 @@ def _is_null(value: Any) -> bool:
 
 
 def _to_float(value: Any) -> float:
+    """Convert numeric-like values to float and reject non-numeric values."""
     if isinstance(value, bool):
         raise ValueError("bool is not numeric")
     if isinstance(value, (int, float)):
@@ -21,6 +25,7 @@ def _to_float(value: Any) -> float:
 
 
 def compute_stats(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Compute row count, null counts, and numeric statistics by field."""
     all_fields: set[str] = set()
     null_counts: dict[str, int] = defaultdict(int)
     numeric_values: dict[str, list[float]] = defaultdict(list)

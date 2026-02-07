@@ -1,3 +1,5 @@
+"""Celery tasks and helpers for asynchronous dataset processing."""
+
 import uuid
 from datetime import UTC, datetime
 from typing import Any
@@ -8,6 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import OperationalError, SQLAlchemyError
 
 from src.core.config import settings
+from src.core.logging import bind_context, clear_context, get_logger
 from src.core.schemas import DatasetStatus, JobState
 from src.db.models import Dataset, Job, Report
 from src.db.session import SessionLocal
@@ -23,10 +26,12 @@ from src.services.storage import (
 from .celery_app import celery_app
 
 RETRYABLE_EXCEPTIONS = (OperationalError, OSError, S3Error)
+logger = get_logger(__name__)
 
 
 @celery_app.task
 def ping() -> str:
+    """Healthcheck task used by test workers."""
     return "pong"
 
 
@@ -39,9 +44,11 @@ def _set_job_progress(
     started_at: bool = False,
     finished_at: bool = False,
 ) -> None:
+    """Update job progress and lifecycle timestamps."""
     with SessionLocal() as session:
         job = session.get(Job, job_id)
         if not job:
+            logger.warning("worker.job.progress_job_missing", job_id=str(job_id))
             return
         if state is not None:
             job.state = state
@@ -53,6 +60,12 @@ def _set_job_progress(
         if finished_at:
             job.finished_at = datetime.now(UTC)
         session.commit()
+        logger.info(
+            "worker.job.progress_updated",
+            job_id=str(job_id),
+            progress=progress,
+            state=state,
+        )
 
 
 def _mark_dataset_state(
@@ -63,9 +76,11 @@ def _mark_dataset_state(
     error: str | None = None,
     processed: bool = False,
 ) -> None:
+    """Update dataset status and processing metadata."""
     with SessionLocal() as session:
         dataset = session.get(Dataset, dataset_id)
         if not dataset:
+            logger.warning("worker.dataset.state_dataset_missing", dataset_id=str(dataset_id))
             return
         dataset.status = status
         dataset.row_count = row_count
@@ -73,9 +88,17 @@ def _mark_dataset_state(
         if processed:
             dataset.processed_at = datetime.now(UTC)
         session.commit()
+        logger.info(
+            "worker.dataset.state_updated",
+            dataset_id=str(dataset_id),
+            status=status,
+            row_count=row_count,
+            processed=processed,
+        )
 
 
 def _upsert_report(dataset_id: uuid.UUID, report_etag: str | None) -> None:
+    """Create or update report metadata row for a processed dataset."""
     report_key = f"datasets/{dataset_id}/report/report.json"
     with SessionLocal() as session:
         report = session.scalar(select(Report).where(Report.dataset_id == dataset_id).limit(1))
@@ -92,9 +115,16 @@ def _upsert_report(dataset_id: uuid.UUID, report_etag: str | None) -> None:
             report.report_key = report_key
             report.report_etag = report_etag
         session.commit()
+        logger.info(
+            "worker.report.upserted",
+            dataset_id=str(dataset_id),
+            report_key=report_key,
+            report_etag=report_etag,
+        )
 
 
 def _get_dataset_or_fail(dataset_id: uuid.UUID) -> Dataset:
+    """Return dataset row or raise an invalid dataset error."""
     with SessionLocal() as session:
         dataset = session.get(Dataset, dataset_id)
         if dataset is None:
@@ -104,8 +134,16 @@ def _get_dataset_or_fail(dataset_id: uuid.UUID) -> Dataset:
 
 @celery_app.task(name="process_dataset", bind=True, max_retries=3)
 def process_dataset(self: Any, dataset_id: str, job_id: str) -> str:
+    """Process a dataset, generate report payload, and persist outcomes."""
     dataset_uuid = uuid.UUID(dataset_id)
     job_uuid = uuid.UUID(job_id)
+    bind_context(
+        dataset_id=str(dataset_uuid),
+        job_id=str(job_uuid),
+        celery_task_id=str(getattr(self.request, "id", "")),
+    )
+
+    logger.info("worker.task.started")
 
     try:
         dataset = _get_dataset_or_fail(dataset_uuid)
@@ -124,12 +162,15 @@ def process_dataset(self: Any, dataset_id: str, job_id: str) -> str:
         payload = download_object(minio, dataset.upload_bucket, dataset.upload_key)
         rows = parse_rows(dataset.content_type, payload)
         _set_job_progress(job_id=job_uuid, progress=25)
+        logger.info("worker.task.rows_parsed", row_count=len(rows))
 
         stats = compute_stats(rows)
         _set_job_progress(job_id=job_uuid, progress=60)
+        logger.info("worker.task.stats_computed", row_count=stats["row_count"])
 
         anomalies = compute_anomalies(rows)
         _set_job_progress(job_id=job_uuid, progress=85)
+        logger.info("worker.task.anomalies_computed")
 
         report_payload: dict[str, Any] = {
             "dataset_id": str(dataset_uuid),
@@ -148,6 +189,12 @@ def process_dataset(self: Any, dataset_id: str, job_id: str) -> str:
             report_payload,
         )
         _upsert_report(dataset_uuid, report_etag)
+        logger.info(
+            "worker.task.report_persisted",
+            report_key=report_key,
+            report_bucket=settings.s3_bucket_reports,
+            report_etag=report_etag,
+        )
 
         _mark_dataset_state(
             dataset_id=dataset_uuid,
@@ -163,8 +210,10 @@ def process_dataset(self: Any, dataset_id: str, job_id: str) -> str:
             finished_at=True,
             error=None,
         )
+        logger.info("worker.task.completed_successfully", row_count=stats["row_count"])
         return f"success:{dataset_id}:{job_id}"
     except InvalidDatasetFormatError as exc:
+        logger.warning("worker.task.invalid_dataset", error=str(exc))
         _mark_dataset_state(
             dataset_id=dataset_uuid, status=DatasetStatus.failed.value, error=str(exc)
         )
@@ -177,6 +226,13 @@ def process_dataset(self: Any, dataset_id: str, job_id: str) -> str:
         )
         return f"failed:{dataset_id}:{job_id}"
     except RETRYABLE_EXCEPTIONS as exc:
+        countdown_seconds = min(60, 2 ** (self.request.retries + 1))
+        logger.warning(
+            "worker.task.retry_scheduled",
+            error=str(exc),
+            retry_number=self.request.retries + 1,
+            countdown_seconds=countdown_seconds,
+        )
         _set_job_progress(
             job_id=job_uuid,
             progress=5,
@@ -184,8 +240,9 @@ def process_dataset(self: Any, dataset_id: str, job_id: str) -> str:
             error=str(exc),
         )
         try:
-            raise self.retry(exc=exc, countdown=min(60, 2 ** (self.request.retries + 1)))
+            raise self.retry(exc=exc, countdown=countdown_seconds)
         except MaxRetriesExceededError:
+            logger.error("worker.task.retry_exhausted", error=str(exc))
             _mark_dataset_state(
                 dataset_id=dataset_uuid, status=DatasetStatus.failed.value, error=str(exc)
             )
@@ -198,6 +255,7 @@ def process_dataset(self: Any, dataset_id: str, job_id: str) -> str:
             )
             return f"failed:{dataset_id}:{job_id}"
     except SQLAlchemyError as exc:
+        logger.exception("worker.task.database_failed", error=str(exc))
         _set_job_progress(
             job_id=job_uuid,
             progress=100,
@@ -210,6 +268,7 @@ def process_dataset(self: Any, dataset_id: str, job_id: str) -> str:
         )
         return f"failed:{dataset_id}:{job_id}"
     except Exception as exc:
+        logger.exception("worker.task.unexpected_failed", error=str(exc))
         _set_job_progress(
             job_id=job_uuid,
             progress=100,
@@ -221,3 +280,5 @@ def process_dataset(self: Any, dataset_id: str, job_id: str) -> str:
             dataset_id=dataset_uuid, status=DatasetStatus.failed.value, error=str(exc)
         )
         raise
+    finally:
+        clear_context()
