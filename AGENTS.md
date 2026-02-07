@@ -295,22 +295,136 @@ Implemented test coverage:
     └── src/
 ```
 
-## Stretch Roadmap (Future)
+## Focused Backend Roadmap
 
-- Presigned uploads
-  - add endpoint(s) that issue short-lived MinIO signed URLs
-  - allow clients to upload directly to object storage
-  - add completion/verification step before dataset is considered `uploaded`
+This roadmap is intentionally limited to the five backend priorities below.
 
-- Celery beat cleanup
-  - add `beat` service and periodic cleanup tasks
-  - detect and mark stale jobs as failed
-  - optional retention cleanup for old jobs/reports/orphaned objects
+### 1) Pagination and Filtering for `GET /datasets` and `GET /jobs`
 
-- WebSocket progress
-  - add WS endpoint (for example `/ws/jobs/{job_id}`)
-  - push job state/progress updates in real time
-  - keep polling endpoints as fallback
+Goals:
+- prevent unbounded list responses
+- keep ordering stable and deterministic
+- support practical filters for real operations
+
+Plan:
+- add bounded pagination (recommended: cursor-based)
+  - request: `limit`, `cursor`
+  - response: `next_cursor`, `has_more`
+  - enforce max page size in API validation
+- add dataset filters
+  - `status`, `uploaded_before`, `uploaded_after`, `name_contains`
+- add job filters
+  - `state`, `dataset_id`, `queued_before`, `queued_after`
+- preserve stable sort order with tiebreakers
+  - datasets: `uploaded_at DESC, id DESC`
+  - jobs: `queued_at DESC, id DESC`
+- add supporting indexes for filter + sort combinations
+- expand API and service tests for pagination correctness and filter combinations
+
+### 2) Queue Reliability Hardening with Transactional Outbox
+
+Goals:
+- remove DB-write vs broker-publish mismatch windows
+- make enqueue behavior recoverable and idempotent
+
+Plan:
+- add an outbox table for publish intents (for example `job_outbox`)
+  - `id`, `job_id`, `payload`, `status`, `attempt_count`, `next_attempt_at`, `last_error`, timestamps
+- in one DB transaction
+  - create queued job
+  - create outbox event
+  - do not publish directly to RabbitMQ inside the request transaction
+- add an outbox dispatcher worker/loop
+  - publish pending events
+  - persist publish result (`celery_task_id`, delivered status)
+  - retry with backoff on transient errors
+- enforce idempotency
+  - safe duplicate publish handling
+  - safe repeated dispatcher retries
+- add tests for failure windows
+  - crash after commit before publish
+  - publish succeeds but ack/update fails
+
+### 3) Production Observability (Metrics, Tracing, Alerts)
+
+Goals:
+- make failures and bottlenecks visible
+- shorten detection and recovery time
+
+Plan:
+- add metrics exposure (Prometheus-compatible endpoint)
+- instrument API and worker with core metrics
+  - enqueue attempts/success/failure
+  - job transitions by state
+  - retry scheduled/exhausted counts
+  - processing duration histogram
+  - queue lag and stale-job gauges
+- add distributed tracing (OpenTelemetry)
+  - API request span
+  - enqueue/outbox publish span
+  - worker task span
+  - DB and storage child spans
+- define alert rules and runbook
+  - stuck `queued|started|retrying` jobs
+  - elevated failure rate
+  - retry exhaustion spikes
+  - worker heartbeat loss
+
+### 4) Large-File Scalability (Streaming and Memory-Safe Compute)
+
+Goals:
+- keep memory bounded for large datasets
+- maintain current report semantics where feasible
+
+Plan:
+- replace full-buffer download/parse with streaming reads from storage
+- implement incremental parsers
+  - CSV row streaming
+  - JSON array streaming parser (object-by-object)
+- refactor stats/anomaly computation to incremental aggregators
+  - online row count and null counts
+  - numeric min/max/mean without storing full columns
+- handle outlier detection at scale
+  - two-pass or sketch-based quantile strategy
+  - bounded outlier example collection
+- add safety limits and configs
+  - max file size, max rows, max fields, parser guards
+- extend tests with larger synthetic payloads and memory-focused assertions
+
+### 5) Celery Beat Cleanup and Retention Automation
+
+Goals:
+- automatically recover stuck lifecycle states
+- keep DB and object storage tidy over time
+
+Plan:
+- add a `beat` service to docker-compose for scheduled maintenance tasks
+- add stale-job sweeper task
+  - detect jobs stuck in `queued|started|retrying` beyond threshold
+  - mark job `failure` and dataset `failed` with explicit stale reason
+- add retention cleanup task
+  - remove or archive old terminal jobs/reports metadata by policy
+- add orphan reconciliation task
+  - detect DB report metadata without object and object without metadata
+  - apply safe cleanup policy with audit logging
+- add dry-run mode and safety windows for destructive cleanup paths
+- expose cleanup metrics (candidates scanned, cleaned, skipped, failed)
+
+## Recommended Execution Order
+
+1. Observability baseline (item 3)
+2. Pagination/filtering (item 1)
+3. Transactional outbox (item 2)
+4. Celery beat cleanup and retention (item 5)
+5. Large-file streaming scalability refactor (item 4)
+
+## Definition of Done for This Roadmap
+
+- list endpoints are bounded by default and filterable
+- enqueue path is resilient to partial-failure windows
+- metrics/traces/alerts make stuck or failing pipelines visible
+- worker processing remains memory-safe for large datasets
+- periodic cleanup keeps jobs/reports/storage consistent
 
 ## Notes
 - `POST /datasets/{dataset_id}/process?force=true` is not implemented.
