@@ -88,6 +88,11 @@ uv run task test-e2e
 
 The API and worker use structured logging with request/task context propagation.
 
+Notable behavior:
+
+- API responses include `X-Request-ID`, and the same correlation id is emitted as `request_id` in logs.
+- Sensitive values are redacted when keys contain fragments such as `password`, `secret`, `token`, `authorization`, `access_key`, or `secret_key`.
+
 Supported environment variables:
 
 - `LOG_LEVEL` (default: `INFO`)
@@ -209,6 +214,28 @@ curl -sS "$BASE_URL/datasets/$DATASET_ID/report" | jq
 ```bash
 curl -sS "$BASE_URL/jobs" | jq
 ```
+
+## API Behavior Notes
+
+- Upload idempotency is checksum-based: uploading the same bytes returns the original dataset row and does not overwrite previously stored metadata.
+- Upload filenames are normalized to basename before storage key generation (path components are stripped).
+- Processing enqueue is idempotent: existing active jobs are reused, and completed datasets with reports reuse their latest job (or create a synthetic success job when no prior job exists).
+- Concurrent enqueue races are handled by a partial unique index on active jobs; conflicting requests return the same active job.
+- If queue publish fails after creating a queued job, that job is marked `failure` with `error="Failed to enqueue task."`, and the endpoint returns `503`.
+- `GET /datasets/{dataset_id}/report` returns `404` when report metadata is missing, and `503` when metadata exists but the report object cannot be downloaded.
+- Expected error mapping:
+  - `422`: invalid request payload/form values
+  - `415`: unsupported upload content type
+  - `404`: missing dataset/job/report
+  - `503`: storage/database/queue failures
+  - `500`: safe fallback for unhandled exceptions
+
+## Report Semantics
+
+- Text payload decoding accepts UTF-8 and UTF-8 BOM.
+- Null counting treats `None` and blank/whitespace strings as null.
+- Numeric stats include only numeric-only fields; booleans are treated as non-numeric.
+- Outlier detection uses IQR and runs only when a field has at least 4 numeric values with positive IQR.
 
 ## Failure-path Example
 

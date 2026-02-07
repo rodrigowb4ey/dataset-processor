@@ -149,13 +149,23 @@ Indexes:
 - `GET /`
   - returns `{"Hello":"World"}`
 
+### Cross-cutting behavior
+- API responses include `X-Request-ID` for request correlation.
+- Expected error mapping:
+  - `422`: invalid request payload/form values (validation details can be a list)
+  - `415`: unsupported upload content type
+  - `404`: missing dataset/job/report
+  - `503`: storage/database/queue failures
+  - `500`: safe fallback for unhandled exceptions
+
 ### Datasets
 1. `POST /datasets` (multipart form-data: `name`, `file`)
    - allowed content types: `text/csv`, `application/json`
    - computes SHA256 + size
+   - normalizes filename to basename before building storage key
    - uploads to MinIO uploads bucket
    - writes dataset row with `status=uploaded`
-   - idempotent by checksum (returns existing dataset)
+   - idempotent by checksum (returns existing dataset; does not mutate existing metadata)
    - response model: `DatasetUploadPublic`
    - status: `201`
 
@@ -165,10 +175,12 @@ Indexes:
 
 3. `POST /datasets/{dataset_id}/process`
    - idempotent enqueue behavior:
-     - if active job exists (`queued|started|retrying`), returns it
-     - if dataset is `done` and report exists, returns latest job
-     - if dataset is `done` and report exists but no prior job, creates synthetic success job
-     - else creates new queued job and enqueues Celery task
+      - if active job exists (`queued|started|retrying`), returns it
+      - if dataset is `done` and report exists, returns latest job
+      - if dataset is `done` and report exists but no prior job, creates synthetic success job
+      - else creates new queued job and enqueues Celery task
+   - enqueue race safety: concurrent requests can hit active-job unique index and return the existing active job
+   - enqueue failure behavior: if queue send fails after job creation, job is marked `failure` with `error="Failed to enqueue task."`
    - saves `celery_task_id`
    - response model: `JobEnqueuePublic`
    - status: `202`
@@ -176,6 +188,7 @@ Indexes:
 4. `GET /datasets/{dataset_id}/report`
    - loads JSON report object from MinIO (`report_bucket` + `report_key` in DB)
    - returns `404` if report is not ready
+   - returns `503` if metadata exists but report object download fails
 
 ### Jobs
 5. `GET /jobs`
@@ -191,20 +204,24 @@ Indexes:
 
 Task name: `process_dataset(dataset_id, job_id)`
 
+Additional task: `ping() -> "pong"` (used by worker/test health checks)
+
 Behavior:
 - fetch dataset
 - set job/dataset processing state
 - download dataset object from MinIO
 - parse:
+  - payload decoding accepts UTF-8 and UTF-8 BOM
   - CSV via `csv.DictReader`
   - JSON must be a list of objects
 - compute:
   - row count
-  - null counts per field
+  - null counts per field (`None` and blank/whitespace strings are null)
   - numeric stats (`min`, `max`, `mean`) for numeric-only fields
+    - bool values are treated as non-numeric
   - anomalies:
     - duplicate row count
-    - IQR outliers + examples
+    - IQR outliers + examples (only when field has >=4 numeric values and positive IQR)
 - upload report JSON to MinIO reports bucket
 - upsert report row in DB
 - finalize dataset and job
@@ -227,9 +244,13 @@ Implemented test coverage:
 - API route tests
   - `tests/api/routes/test_datasets.py`
   - `tests/api/routes/test_jobs.py`
+  - `tests/api/routes/test_logging.py`
 - Service tests
   - `tests/services/test_datasets_service.py`
+  - `tests/services/test_jobs_service.py`
   - `tests/services/test_storage.py`
+- Core logging tests
+  - `tests/core/test_logging_config.py`
 - Processing unit tests
   - `tests/processing/test_parsers.py`
   - `tests/processing/test_stats.py`
@@ -267,10 +288,11 @@ Implemented test coverage:
 │   │   └── routes/
 │   │       ├── datasets.py
 │   │       ├── jobs.py
-│   │       └── reports.py
+│   │       └── __init__.py
 │   ├── core/
 │   │   ├── config.py
 │   │   ├── errors.py
+│   │   ├── logging.py
 │   │   └── schemas.py
 │   ├── db/
 │   │   ├── base.py
@@ -282,6 +304,7 @@ Implemented test coverage:
 │   │   └── anomalies.py
 │   ├── services/
 │   │   ├── datasets.py
+│   │   ├── jobs.py
 │   │   └── storage.py
 │   ├── utils/
 │   │   └── checksum.py
