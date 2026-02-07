@@ -24,12 +24,6 @@ configure_logging(
 app = FastAPI()
 logger = get_logger(__name__)
 
-app.add_middleware(
-    CorrelationIdMiddleware,
-    header_name="X-Request-ID",
-    update_request_header=True,
-)
-
 app.include_router(datasets_router)
 app.include_router(jobs_router)
 
@@ -62,6 +56,13 @@ async def request_logging_middleware(
     )
     clear_context()
     return response
+
+
+app.add_middleware(
+    CorrelationIdMiddleware,
+    header_name="X-Request-ID",
+    update_request_header=True,
+)
 
 
 @app.exception_handler(AppError)
