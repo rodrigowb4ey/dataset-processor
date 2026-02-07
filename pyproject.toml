@@ -23,6 +23,7 @@ dev = [
     "mypy>=1.19.1",
     "pytest>=9.0.2",
     "pytest-asyncio>=1.3.0",
+    "pytest-xdist>=3.6.1",
     "ruff>=0.14.14",
     "taskipy>=1.14.1",
     "testcontainers[minio,postgres]>=4.14.0",
@@ -86,11 +87,14 @@ typecheck = "uv run mypy"
 qa = "uv run task format-check && uv run task lint && uv run task typecheck"
 check = "uv run task qa"
 
-test = "uv run pytest"
-test-fast = "uv run pytest -m 'not e2e'"
+test = "uv run pytest -m 'not e2e'"
+test-fast = "uv run task test"
+test-parallel = "uv run pytest -m 'not e2e' -n 2 --dist loadfile"
+test-all = "uv run pytest"
+test-all-parallel = "uv run pytest -n 2 --dist load"
 test-e2e = "uv run pytest -m e2e"
-verify = "uv run task qa && uv run task test-fast"
-verify-all = "uv run task qa && uv run task test"
+verify = "uv run task qa && uv run task test"
+verify-all = "uv run task qa && uv run task test-all"
 
 stack-up = "docker compose up -d"
 stack-rebuild = "docker compose up -d --build"

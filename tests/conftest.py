@@ -12,7 +12,7 @@ from httpx import ASGITransport, AsyncClient
 from kombu import Connection
 from minio import Minio
 from psycopg import sql
-from sqlalchemy import create_engine
+from sqlalchemy import MetaData, create_engine
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -77,6 +77,11 @@ def _wait_for_rabbitmq(url: str, timeout: float = 20.0) -> None:
             time.sleep(0.2)
 
 
+def _quote_ident(identifier: str) -> str:
+    escaped = identifier.replace('"', '""')
+    return f'"{escaped}"'
+
+
 @pytest.fixture(scope="session")
 def postgres_container() -> Generator[PostgresContainer]:
     container = PostgresContainer(
@@ -113,7 +118,15 @@ def db_urls(postgres_container: PostgresContainer) -> Generator[dict[str, str]]:
         main_conn.close()
 
 
-@pytest_asyncio.fixture()
+@pytest.fixture(scope="session")
+def db_metadata() -> MetaData:
+    import src.db.models  # noqa: F401
+    from src.db.base import Base
+
+    return Base.metadata
+
+
+@pytest_asyncio.fixture(scope="session")
 async def async_engine(db_urls: dict[str, str]) -> AsyncGenerator[AsyncEngine]:
     async_url = _replace_scheme(db_urls["test_url"], "postgresql+asyncpg")
     engine = create_async_engine(async_url, poolclass=NullPool)
@@ -123,16 +136,30 @@ async def async_engine(db_urls: dict[str, str]) -> AsyncGenerator[AsyncEngine]:
         await engine.dispose()
 
 
-@pytest_asyncio.fixture(autouse=True)
-async def db_schema(async_engine: AsyncEngine) -> AsyncGenerator[None]:
-    import src.db.models  # noqa: F401
-    from src.db.base import Base
-
+@pytest_asyncio.fixture(scope="session", autouse=True)
+async def db_schema(async_engine: AsyncEngine, db_metadata: MetaData) -> AsyncGenerator[None]:
     async with async_engine.begin() as connection:
-        await connection.run_sync(Base.metadata.create_all)
+        await connection.run_sync(db_metadata.create_all)
     yield
     async with async_engine.begin() as connection:
-        await connection.run_sync(Base.metadata.drop_all)
+        await connection.run_sync(db_metadata.drop_all)
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def db_cleanup(
+    async_engine: AsyncEngine,
+    db_metadata: MetaData,
+    db_schema: None,
+) -> AsyncGenerator[None]:
+    del db_schema
+
+    table_names = [_quote_ident(table.name) for table in reversed(db_metadata.sorted_tables)]
+    if table_names:
+        truncate_sql = f"TRUNCATE TABLE {', '.join(table_names)} RESTART IDENTITY CASCADE"
+        async with async_engine.begin() as connection:
+            await connection.exec_driver_sql(truncate_sql)
+
+    yield
 
 
 @pytest.fixture(scope="session")
@@ -185,11 +212,10 @@ def rabbitmq_url(rabbitmq_container: DockerContainer) -> str:
     return url
 
 
-@pytest.fixture()
+@pytest.fixture(scope="module")
 def e2e_celery_worker(
     db_urls: dict[str, str],
     minio_client: Minio,
-    monkeypatch: pytest.MonkeyPatch,
     rabbitmq_url: str,
 ) -> Generator[None]:
     from src.services import datasets as datasets_service
@@ -200,9 +226,10 @@ def e2e_celery_worker(
     sync_engine = create_engine(sync_url, pool_pre_ping=True)
     session_local = sessionmaker(bind=sync_engine, expire_on_commit=False)
 
-    monkeypatch.setattr(worker_tasks, "SessionLocal", session_local)
-    monkeypatch.setattr(worker_tasks, "build_minio_client", lambda: minio_client)
-    monkeypatch.setattr(datasets_service, "celery_app", celery_app)
+    patcher = pytest.MonkeyPatch()
+    patcher.setattr(worker_tasks, "SessionLocal", session_local)
+    patcher.setattr(worker_tasks, "build_minio_client", lambda: minio_client)
+    patcher.setattr(datasets_service, "celery_app", celery_app)
 
     celery_app.conf.update(
         broker_url=rabbitmq_url,
@@ -210,10 +237,12 @@ def e2e_celery_worker(
         task_always_eager=False,
     )
 
-    with start_worker(celery_app, perform_ping_check=False, concurrency=1, pool="solo"):
-        yield
-
-    sync_engine.dispose()
+    try:
+        with start_worker(celery_app, perform_ping_check=False, concurrency=1, pool="solo"):
+            yield
+    finally:
+        patcher.undo()
+        sync_engine.dispose()
 
 
 @pytest_asyncio.fixture()

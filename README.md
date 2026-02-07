@@ -33,9 +33,12 @@ Most common workflows:
 uv run task qa
 
 # tests
-uv run task test-fast
 uv run task test
+uv run task test-parallel
+uv run task test-all
+uv run task test-all-parallel
 uv run task test-e2e
+uv run task test-fast  # alias for test
 
 # combined checks
 uv run task verify
@@ -200,8 +203,28 @@ Collection variables:
 
 ## Running Tests
 
+Run fast tests (default, excludes e2e):
+
 ```bash
 uv run task test
+```
+
+Run full suite (including e2e):
+
+```bash
+uv run task test-all
+```
+
+Run full suite in parallel (optional):
+
+```bash
+uv run task test-all-parallel
+```
+
+Run fast tests in parallel (optional):
+
+```bash
+uv run task test-parallel
 ```
 
 Run only e2e tests:
