@@ -6,9 +6,9 @@ Async dataset processing service where users upload CSV/JSON files, enqueue back
 
 - FastAPI (async API)
 - Celery worker
-- Postgres (datasets, jobs, reports)
+- Postgres (datasets, jobs, report metadata)
 - RabbitMQ (broker)
-- MinIO (object storage)
+- MinIO (dataset + report JSON object storage)
 - Docker Compose for full local runtime
 
 ## Prerequisites

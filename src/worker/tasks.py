@@ -75,23 +75,19 @@ def _mark_dataset_state(
         session.commit()
 
 
-def _upsert_report(
-    dataset_id: uuid.UUID, report_payload: dict[str, Any], report_etag: str | None
-) -> None:
+def _upsert_report(dataset_id: uuid.UUID, report_etag: str | None) -> None:
     report_key = f"datasets/{dataset_id}/report/report.json"
     with SessionLocal() as session:
         report = session.scalar(select(Report).where(Report.dataset_id == dataset_id).limit(1))
         if report is None:
             report = Report(
                 dataset_id=dataset_id,
-                report_json=report_payload,
                 report_bucket=settings.s3_bucket_reports,
                 report_key=report_key,
                 report_etag=report_etag,
             )
             session.add(report)
         else:
-            report.report_json = report_payload
             report.report_bucket = settings.s3_bucket_reports
             report.report_key = report_key
             report.report_etag = report_etag
@@ -151,7 +147,7 @@ def process_dataset(self: Any, dataset_id: str, job_id: str) -> str:
             report_key,
             report_payload,
         )
-        _upsert_report(dataset_uuid, report_payload, report_etag)
+        _upsert_report(dataset_uuid, report_etag)
 
         _mark_dataset_state(
             dataset_id=dataset_uuid,

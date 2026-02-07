@@ -1,14 +1,16 @@
+import asyncio
 import uuid
 from typing import Annotated, cast
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Response
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.core.errors import DatabaseError, NotFoundError
+from src.core.errors import DatabaseError, NotFoundError, StorageError
 from src.db.models import Report
 from src.db.session import get_async_session
+from src.services.storage import build_minio_client, download_object
 
 router = APIRouter(prefix="/datasets", tags=["reports"])
 
@@ -17,7 +19,7 @@ router = APIRouter(prefix="/datasets", tags=["reports"])
 async def get_dataset_report(
     session: Annotated[AsyncSession, Depends(get_async_session)],
     dataset_id: uuid.UUID,
-) -> dict[str, object]:
+) -> Response:
     try:
         report = cast(
             "Report | None",
@@ -27,4 +29,16 @@ async def get_dataset_report(
             raise NotFoundError("Report not found.")
     except SQLAlchemyError as exc:
         raise DatabaseError() from exc
-    return cast("dict[str, object]", report.report_json)
+
+    client = build_minio_client()
+    try:
+        payload = await asyncio.to_thread(
+            download_object,
+            client,
+            report.report_bucket,
+            report.report_key,
+        )
+    except Exception as exc:
+        raise StorageError("Failed to download report from storage.") from exc
+
+    return Response(content=payload, media_type="application/json")

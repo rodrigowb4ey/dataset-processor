@@ -229,9 +229,11 @@ async def client(
             yield session
 
     from src.api.routes import datasets as datasets_module
+    from src.api.routes import reports as reports_module
 
     app.dependency_overrides[get_async_session] = get_session_override
     monkeypatch.setattr(datasets_module, "build_minio_client", lambda: minio_client)
+    monkeypatch.setattr(reports_module, "build_minio_client", lambda: minio_client)
 
     transport = ASGITransport(app=app, raise_app_exceptions=False)
     async with AsyncClient(transport=transport, base_url="http://test") as async_client:

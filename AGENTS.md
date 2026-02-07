@@ -135,7 +135,6 @@ Indexes:
 ### `reports`
 - `id` UUID PK
 - `dataset_id` UUID unique FK -> `datasets.id`
-- `report_json` JSONB not null
 - `created_at` timestamptz default now()
 - `report_bucket` text not null
 - `report_key` text not null
@@ -175,7 +174,7 @@ Indexes:
    - status: `202`
 
 4. `GET /datasets/{dataset_id}/report`
-   - returns stored JSON report from DB (`reports.report_json`)
+   - loads JSON report object from MinIO (`report_bucket` + `report_key` in DB)
    - returns `404` if report is not ready
 
 ### Jobs
@@ -258,7 +257,8 @@ Implemented test coverage:
 │   ├── env.py
 │   └── versions/
 │       ├── 20260131_000001_create_datasets_jobs_reports.py
-│       └── 20260206_000002_add_active_job_unique_index.py
+│       ├── 20260206_000002_add_active_job_unique_index.py
+│       └── 20260207_000003_drop_reports_report_json.py
 ├── postman/
 │   └── dataset-processor.postman_collection.json
 ├── src/
@@ -315,4 +315,4 @@ Implemented test coverage:
 
 ## Notes
 - `POST /datasets/{dataset_id}/process?force=true` is not implemented.
-- Report retrieval currently reads from DB JSON payload (not streaming from MinIO).
+- Report retrieval reads from MinIO using metadata stored in Postgres.

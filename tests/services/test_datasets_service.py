@@ -33,7 +33,6 @@ def build_dataset(*, checksum: str = "checksum", status: str = "uploaded") -> Da
 def build_report(dataset_id: UUID) -> Report:
     return Report(
         dataset_id=dataset_id,
-        report_json={"rows": 2},
         report_bucket=settings.s3_bucket_reports,
         report_key=f"datasets/{dataset_id}/report/report.json",
         report_etag="etag",

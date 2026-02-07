@@ -1,5 +1,7 @@
 import hashlib
+import json
 from datetime import UTC, datetime, timedelta
+from io import BytesIO
 from types import SimpleNamespace
 from uuid import UUID, uuid4
 
@@ -13,6 +15,23 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from src.core.config import settings
 from src.db.models import Dataset, Job, Report
 from src.worker.celery_app import celery_app
+
+
+def _upload_report_object(
+    minio_client: Minio, dataset_id: UUID, payload: dict[str, object]
+) -> None:
+    if not minio_client.bucket_exists(settings.s3_bucket_reports):
+        minio_client.make_bucket(settings.s3_bucket_reports)
+
+    object_key = f"datasets/{dataset_id}/report/report.json"
+    body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+    minio_client.put_object(
+        bucket_name=settings.s3_bucket_reports,
+        object_name=object_key,
+        data=BytesIO(body),
+        length=len(body),
+        content_type="application/json",
+    )
 
 
 async def test_upload_csv_success(
@@ -256,7 +275,6 @@ async def test_get_dataset_with_jobs_and_report(
         )
         report = Report(
             dataset_id=dataset_id,
-            report_json={"rows": 2},
             report_bucket=settings.s3_bucket_reports,
             report_key=f"datasets/{dataset_id}/report/report.json",
             report_etag="etag",
@@ -410,7 +428,6 @@ async def test_process_dataset_done_returns_latest_job(
         )
         report = Report(
             dataset_id=dataset_id,
-            report_json={"rows": 2},
             report_bucket=settings.s3_bucket_reports,
             report_key=f"datasets/{dataset_id}/report/report.json",
             report_etag="etag",
@@ -462,7 +479,6 @@ async def test_process_dataset_done_with_report_but_no_jobs(
         dataset.status = "done"
         report = Report(
             dataset_id=dataset_id,
-            report_json={"rows": 2},
             report_bucket=settings.s3_bucket_reports,
             report_key=f"datasets/{dataset_id}/report/report.json",
             report_etag="etag",
@@ -551,6 +567,7 @@ async def test_get_report_success(
     dataset_name: str,
     sample_csv_bytes: bytes,
     async_engine: AsyncEngine,
+    minio_client: Minio,
 ) -> None:
     upload = await client.post(
         "/datasets",
@@ -560,11 +577,12 @@ async def test_get_report_success(
     dataset_id = UUID(upload.json()["id"])
 
     report_payload = {"row_count": 2, "null_counts": {"value": 0}}
+    _upload_report_object(minio_client, dataset_id, report_payload)
+
     sessionmaker = async_sessionmaker(async_engine, expire_on_commit=False)
     async with sessionmaker() as session:
         report = Report(
             dataset_id=dataset_id,
-            report_json=report_payload,
             report_bucket=settings.s3_bucket_reports,
             report_key=f"datasets/{dataset_id}/report/report.json",
             report_etag="etag",
@@ -576,6 +594,36 @@ async def test_get_report_success(
 
     assert response.status_code == 200
     assert response.json() == report_payload
+
+
+async def test_get_report_object_missing_returns_503(
+    client: AsyncClient,
+    dataset_name: str,
+    sample_csv_bytes: bytes,
+    async_engine: AsyncEngine,
+) -> None:
+    upload = await client.post(
+        "/datasets",
+        data={"name": dataset_name},
+        files={"file": ("data.csv", sample_csv_bytes, "text/csv")},
+    )
+    dataset_id = UUID(upload.json()["id"])
+
+    sessionmaker = async_sessionmaker(async_engine, expire_on_commit=False)
+    async with sessionmaker() as session:
+        report = Report(
+            dataset_id=dataset_id,
+            report_bucket=settings.s3_bucket_reports,
+            report_key=f"datasets/{dataset_id}/report/report.json",
+            report_etag="etag",
+        )
+        session.add(report)
+        await session.commit()
+
+    response = await client.get(f"/datasets/{dataset_id}/report")
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == "Failed to download report from storage."
 
 
 async def test_get_report_not_ready_returns_404(

@@ -2,7 +2,7 @@ from datetime import datetime
 from enum import Enum
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class Message(BaseModel):
@@ -93,7 +93,12 @@ class JobList(BaseModel):
 class ReportPublic(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
-    report_json: dict[str, JsonValue]
+    id: UUID
+    dataset_id: UUID
+    report_bucket: str
+    report_key: str
+    report_etag: str | None = None
+    created_at: datetime
 
 
 class ReportList(BaseModel):

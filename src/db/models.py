@@ -3,7 +3,6 @@ from datetime import datetime
 from typing import Optional
 
 import sqlalchemy as sa
-from pydantic import JsonValue
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -106,7 +105,6 @@ class Report(Base):
         sa.ForeignKey("datasets.id", ondelete="CASCADE"),
         nullable=False,
     )
-    report_json: Mapped[dict[str, JsonValue]] = mapped_column(postgresql.JSONB, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False
     )

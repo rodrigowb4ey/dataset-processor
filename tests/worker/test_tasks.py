@@ -66,10 +66,9 @@ def test_process_dataset_success_flow(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         tasks,
         "_upsert_report",
-        lambda dataset_uuid, report_payload, report_etag: report_updates.append(
+        lambda dataset_uuid, report_etag: report_updates.append(
             {
                 "dataset_id": dataset_uuid,
-                "report_payload": report_payload,
                 "report_etag": report_etag,
             }
         ),
