@@ -1,3 +1,4 @@
+import re
 from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
@@ -109,7 +110,7 @@ async def test_get_job_not_found(async_engine: AsyncEngine) -> None:
     sessionmaker = async_sessionmaker(async_engine, expire_on_commit=False)
 
     async with sessionmaker() as session:
-        with pytest.raises(NotFoundError, match="Job not found."):
+        with pytest.raises(NotFoundError, match=re.escape("Job not found.")):
             await jobs_service.get_job(session, uuid4())
 
 

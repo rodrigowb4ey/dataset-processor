@@ -90,19 +90,23 @@ async def get_dataset_report(session: AsyncSession, dataset_id: uuid.UUID) -> Re
     return report
 
 
-async def enqueue_dataset_processing(
-    session: AsyncSession,
-    dataset_id: uuid.UUID,
-) -> Job:
+async def _get_dataset_or_not_found(session: AsyncSession, dataset_id: uuid.UUID) -> Dataset:
     try:
         dataset = cast(
-            "Dataset | None",
-            await session.scalar(select(Dataset).where(Dataset.id == dataset_id)),
+            "Dataset | None", await session.scalar(select(Dataset).where(Dataset.id == dataset_id))
         )
-        if not dataset:
-            raise NotFoundError("Dataset not found.")
+    except SQLAlchemyError as exc:
+        raise DatabaseError() from exc
 
-        active_job = cast(
+    if dataset is None:
+        raise NotFoundError("Dataset not found.")
+
+    return dataset
+
+
+async def _get_latest_active_job(session: AsyncSession, dataset_id: uuid.UUID) -> Job | None:
+    try:
+        return cast(
             "Job | None",
             await session.scalar(
                 select(Job)
@@ -114,10 +118,13 @@ async def enqueue_dataset_processing(
                 .limit(1)
             ),
         )
-        if active_job:
-            return active_job
+    except SQLAlchemyError as exc:
+        raise DatabaseError() from exc
 
-        latest_job = cast(
+
+async def _get_latest_job(session: AsyncSession, dataset_id: uuid.UUID) -> Job | None:
+    try:
+        return cast(
             "Job | None",
             await session.scalar(
                 select(Job)
@@ -126,68 +133,116 @@ async def enqueue_dataset_processing(
                 .limit(1)
             ),
         )
+    except SQLAlchemyError as exc:
+        raise DatabaseError() from exc
+
+
+async def _dataset_has_report(session: AsyncSession, dataset_id: uuid.UUID) -> bool:
+    try:
         report_id = await session.scalar(
             select(Report.id).where(Report.dataset_id == dataset_id).limit(1)
         )
-        if dataset.status == DatasetStatus.done.value and report_id:
-            if latest_job:
-                return latest_job
-            synthetic_job = Job(
-                id=uuid.uuid4(),
-                dataset_id=dataset.id,
-                state=JobState.success.value,
-                progress=100,
-                started_at=datetime.now(UTC),
-                finished_at=datetime.now(UTC),
-            )
-            session.add(synthetic_job)
-            await session.commit()
-            await session.refresh(synthetic_job)
-            return synthetic_job
+    except SQLAlchemyError as exc:
+        raise DatabaseError() from exc
 
-        job = Job(
-            id=uuid.uuid4(),
-            dataset_id=dataset.id,
-            state=JobState.queued.value,
-            progress=0,
-        )
-        session.add(job)
-        try:
-            await session.commit()
-        except IntegrityError:
-            await session.rollback()
-            existing_active_job = cast(
-                "Job | None",
-                await session.scalar(
-                    select(Job)
-                    .where(
-                        Job.dataset_id == dataset_id,
-                        Job.state.in_(ACTIVE_JOB_STATES),
-                    )
-                    .order_by(Job.queued_at.desc())
-                    .limit(1)
-                ),
-            )
-            if existing_active_job:
-                return existing_active_job
-            raise
-        await session.refresh(job)
+    return report_id is not None
 
-        try:
-            async_result = celery_app.send_task(
-                "process_dataset",
-                [str(dataset.id), str(job.id)],
-            )
-        except Exception as exc:
-            job.state = JobState.failure.value
-            job.error = "Failed to enqueue task."
-            await session.commit()
-            raise QueueError() from exc
 
-        job.celery_task_id = async_result.id
+async def _commit_with_database_error(session: AsyncSession) -> None:
+    try:
         await session.commit()
     except SQLAlchemyError as exc:
         await session.rollback()
         raise DatabaseError() from exc
 
+
+async def _refresh_job_with_database_error(session: AsyncSession, job: Job) -> None:
+    try:
+        await session.refresh(job)
+    except SQLAlchemyError as exc:
+        await session.rollback()
+        raise DatabaseError() from exc
+
+
+async def _create_synthetic_success_job(session: AsyncSession, dataset_id: uuid.UUID) -> Job:
+    synthetic_job = Job(
+        id=uuid.uuid4(),
+        dataset_id=dataset_id,
+        state=JobState.success.value,
+        progress=100,
+        started_at=datetime.now(UTC),
+        finished_at=datetime.now(UTC),
+    )
+    session.add(synthetic_job)
+    await _commit_with_database_error(session)
+    await _refresh_job_with_database_error(session, synthetic_job)
+    return synthetic_job
+
+
+async def _create_queued_job_or_existing_active(
+    session: AsyncSession,
+    dataset_id: uuid.UUID,
+) -> tuple[Job, bool]:
+    job = Job(
+        id=uuid.uuid4(),
+        dataset_id=dataset_id,
+        state=JobState.queued.value,
+        progress=0,
+    )
+    session.add(job)
+
+    try:
+        await session.commit()
+    except IntegrityError as exc:
+        await session.rollback()
+        existing_active_job = await _get_latest_active_job(session, dataset_id)
+        if existing_active_job is not None:
+            return existing_active_job, False
+        raise DatabaseError() from exc
+    except SQLAlchemyError as exc:
+        await session.rollback()
+        raise DatabaseError() from exc
+
+    await _refresh_job_with_database_error(session, job)
+    return job, True
+
+
+async def _enqueue_job_task(session: AsyncSession, dataset_id: uuid.UUID, job: Job) -> Job:
+    try:
+        async_result = celery_app.send_task(
+            "process_dataset",
+            [str(dataset_id), str(job.id)],
+        )
+    except Exception as exc:
+        job.state = JobState.failure.value
+        job.error = "Failed to enqueue task."
+        await _commit_with_database_error(session)
+        raise QueueError() from exc
+
+    job.celery_task_id = async_result.id
+    await _commit_with_database_error(session)
     return job
+
+
+async def enqueue_dataset_processing(
+    session: AsyncSession,
+    dataset_id: uuid.UUID,
+) -> Job:
+    dataset = await _get_dataset_or_not_found(session, dataset_id)
+
+    active_job = await _get_latest_active_job(session, dataset_id)
+    if active_job is not None:
+        return active_job
+
+    latest_job = await _get_latest_job(session, dataset_id)
+    report_exists = await _dataset_has_report(session, dataset_id)
+    if dataset.status == DatasetStatus.done.value and report_exists:
+        if latest_job is not None:
+            return latest_job
+        return await _create_synthetic_success_job(session, dataset.id)
+
+    job, created = await _create_queued_job_or_existing_active(session, dataset.id)
+    if not created:
+        return job
+
+    return await _enqueue_job_task(session, dataset.id, job)

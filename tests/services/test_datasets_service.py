@@ -4,7 +4,7 @@ from uuid import UUID, uuid4
 
 import pytest
 from sqlalchemy import select
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from src.core.config import settings
@@ -297,6 +297,47 @@ async def test_enqueue_dataset_processing_returns_active_job(
 
     assert result.id == active_job.id
     assert len(jobs) == 1
+
+
+async def test_enqueue_dataset_processing_integrity_error_returns_concurrent_active_job(
+    async_engine: AsyncEngine,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sessionmaker = async_sessionmaker(async_engine, expire_on_commit=False)
+    dataset = build_dataset(checksum="enqueue-integrity")
+    now = datetime.now(UTC)
+    active_job_calls = 0
+
+    async with sessionmaker() as session:
+        session.add(dataset)
+        await session.commit()
+
+    def fail_send_task(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("send_task should not be called")
+
+    async def fake_get_latest_active_job(
+        _session: AsyncSession,
+        _dataset_id: UUID,
+    ) -> Job | None:
+        nonlocal active_job_calls
+        active_job_calls += 1
+        if active_job_calls == 1:
+            return None
+        return build_job(dataset.id, state="started", queued_at=now)
+
+    async def failing_commit(_self: AsyncSession) -> None:
+        raise IntegrityError("INSERT INTO jobs", {}, RuntimeError("duplicate active job"))
+
+    monkeypatch.setattr(celery_app, "send_task", fail_send_task)
+    monkeypatch.setattr(datasets_service, "_get_latest_active_job", fake_get_latest_active_job)
+    monkeypatch.setattr(AsyncSession, "commit", failing_commit)
+
+    async with sessionmaker() as session:
+        result = await datasets_service.enqueue_dataset_processing(session, dataset.id)
+
+    assert result.state == "started"
+    assert result.dataset_id == dataset.id
+    assert active_job_calls == 2
 
 
 async def test_enqueue_dataset_processing_done_returns_latest_job(
