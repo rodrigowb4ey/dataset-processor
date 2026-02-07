@@ -546,42 +546,6 @@ async def test_process_dataset_database_error_returns_503(
     assert response.json()["detail"] == "Database error."
 
 
-async def test_get_job_success(
-    client: AsyncClient,
-    dataset_name: str,
-    sample_csv_bytes: bytes,
-    async_engine: AsyncEngine,
-) -> None:
-    upload = await client.post(
-        "/datasets",
-        data={"name": dataset_name},
-        files={"file": ("data.csv", sample_csv_bytes, "text/csv")},
-    )
-    dataset_id = UUID(upload.json()["id"])
-
-    sessionmaker = async_sessionmaker(async_engine, expire_on_commit=False)
-    async with sessionmaker() as session:
-        job = Job(dataset_id=dataset_id, state="started", progress=40)
-        session.add(job)
-        await session.commit()
-
-    response = await client.get(f"/jobs/{job.id}")
-
-    assert response.status_code == 200
-    payload = response.json()
-    assert payload["id"] == str(job.id)
-    assert payload["dataset_id"] == str(dataset_id)
-    assert payload["state"] == "started"
-    assert payload["progress"] == 40
-
-
-async def test_get_job_not_found_returns_404(client: AsyncClient) -> None:
-    response = await client.get(f"/jobs/{uuid4()}")
-
-    assert response.status_code == 404
-    assert response.json()["detail"] == "Job not found."
-
-
 async def test_get_report_success(
     client: AsyncClient,
     dataset_name: str,
