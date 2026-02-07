@@ -7,16 +7,21 @@ from urllib.parse import urlparse
 import psycopg
 import pytest
 import pytest_asyncio
+from celery.contrib.testing.worker import start_worker
 from httpx import ASGITransport, AsyncClient
+from kombu import Connection
 from minio import Minio
 from psycopg import sql
+from sqlalchemy import create_engine
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
     async_sessionmaker,
     create_async_engine,
 )
+from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import NullPool
+from testcontainers.core.container import DockerContainer  # type: ignore[import-untyped]
 from testcontainers.minio import MinioContainer  # type: ignore[import-untyped]
 from testcontainers.postgres import PostgresContainer  # type: ignore[import-untyped]
 
@@ -25,6 +30,7 @@ from src.db.session import get_async_session
 
 POSTGRES_IMAGE = os.getenv("TEST_POSTGRES_IMAGE", "postgres:16-alpine")
 MINIO_IMAGE = os.getenv("TEST_MINIO_IMAGE", "minio/minio:latest")
+RABBITMQ_IMAGE = os.getenv("TEST_RABBITMQ_IMAGE", "rabbitmq:3.13-management")
 
 POSTGRES_USER = "dataset"
 POSTGRES_PASSWORD = "dataset"
@@ -32,6 +38,9 @@ POSTGRES_DB = "dataset"
 
 S3_ACCESS_KEY = "minio"
 S3_SECRET_KEY = "minio123"
+
+RABBITMQ_USER = "dataset"
+RABBITMQ_PASSWORD = "dataset"
 
 
 def _randstr(length: int = 16) -> str:
@@ -48,6 +57,19 @@ def _wait_for_minio(client: Minio, timeout: float = 10.0) -> None:
     while True:
         try:
             client.list_buckets()
+            return
+        except Exception:
+            if time.monotonic() - started >= timeout:
+                raise
+            time.sleep(0.2)
+
+
+def _wait_for_rabbitmq(url: str, timeout: float = 20.0) -> None:
+    started = time.monotonic()
+    while True:
+        try:
+            with Connection(url, connect_timeout=2) as connection:
+                connection.connect()
             return
         except Exception:
             if time.monotonic() - started >= timeout:
@@ -139,6 +161,59 @@ def minio_client(minio_container: MinioContainer) -> Minio:
     )
     _wait_for_minio(client)
     return client
+
+
+@pytest.fixture(scope="session")
+def rabbitmq_container() -> Generator[DockerContainer]:
+    container = DockerContainer(RABBITMQ_IMAGE)
+    container.with_env("RABBITMQ_DEFAULT_USER", RABBITMQ_USER)
+    container.with_env("RABBITMQ_DEFAULT_PASS", RABBITMQ_PASSWORD)
+    container.with_exposed_ports(5672)
+    container.start()
+    try:
+        yield container
+    finally:
+        container.stop()
+
+
+@pytest.fixture(scope="session")
+def rabbitmq_url(rabbitmq_container: DockerContainer) -> str:
+    host = rabbitmq_container.get_container_host_ip()
+    port = rabbitmq_container.get_exposed_port(5672)
+    url = f"amqp://{RABBITMQ_USER}:{RABBITMQ_PASSWORD}@{host}:{port}//"
+    _wait_for_rabbitmq(url)
+    return url
+
+
+@pytest.fixture()
+def e2e_celery_worker(
+    db_urls: dict[str, str],
+    minio_client: Minio,
+    monkeypatch: pytest.MonkeyPatch,
+    rabbitmq_url: str,
+) -> Generator[None]:
+    from src.services import datasets as datasets_service
+    from src.worker import tasks as worker_tasks
+    from src.worker.celery_app import celery_app
+
+    sync_url = _replace_scheme(db_urls["test_url"], "postgresql+psycopg")
+    sync_engine = create_engine(sync_url, pool_pre_ping=True)
+    session_local = sessionmaker(bind=sync_engine, expire_on_commit=False)
+
+    monkeypatch.setattr(worker_tasks, "SessionLocal", session_local)
+    monkeypatch.setattr(worker_tasks, "build_minio_client", lambda: minio_client)
+    monkeypatch.setattr(datasets_service, "celery_app", celery_app)
+
+    celery_app.conf.update(
+        broker_url=rabbitmq_url,
+        broker_connection_retry_on_startup=True,
+        task_always_eager=False,
+    )
+
+    with start_worker(celery_app, perform_ping_check=False, concurrency=1, pool="solo"):
+        yield
+
+    sync_engine.dispose()
 
 
 @pytest_asyncio.fixture()

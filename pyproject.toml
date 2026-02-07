@@ -88,6 +88,9 @@ check = "uv run ruff format --check && uv run ruff check && uv run mypy"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+markers = [
+    "e2e: end-to-end tests with real broker/worker integration",
+]
 filterwarnings = [
     "ignore:The @wait_container_is_ready decorator is deprecated:DeprecationWarning:testcontainers\\.core\\.waiting_utils",
 ]
