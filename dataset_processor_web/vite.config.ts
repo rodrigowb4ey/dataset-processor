@@ -25,7 +25,13 @@ export default defineConfig(({ mode }) => {
       setupFiles: ["./src/test/setup.ts"],
       coverage: {
         provider: "v8",
-        reporter: ["text", "html"],
+        reporter: ["text", "html", "json-summary"],
+        thresholds: {
+          lines: 25,
+          statements: 25,
+          functions: 20,
+          branches: 35,
+        },
       },
     },
   };
