@@ -18,6 +18,24 @@
       "item": [
         {
           "name": "Upload dataset",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 201\", function () {",
+                  "  pm.response.to.have.status(201);",
+                  "});",
+                  "",
+                  "var payload = pm.response.json();",
+                  "if (payload && payload.id) {",
+                  "  pm.collectionVariables.set(\"dataset_id\", payload.id);",
+                  "}"
+                ]
+              }
+            }
+          ],
           "request": {
             "method": "POST",
             "header": [],
@@ -46,6 +64,61 @@
             "header": [],
             "url": "{{base_url}}/datasets/{{dataset_id}}"
           }
+        },
+        {
+          "name": "Enqueue processing",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test(\"status is 202\", function () {",
+                  "  pm.response.to.have.status(202);",
+                  "});",
+                  "",
+                  "var payload = pm.response.json();",
+                  "if (payload && payload.job_id) {",
+                  "  pm.collectionVariables.set(\"job_id\", payload.job_id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": "{{base_url}}/datasets/{{dataset_id}}/process"
+          }
+        },
+        {
+          "name": "Get report",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/datasets/{{dataset_id}}/report"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Jobs",
+      "item": [
+        {
+          "name": "List jobs",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/jobs"
+          }
+        },
+        {
+          "name": "Get job",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": "{{base_url}}/jobs/{{job_id}}"
+          }
         }
       ]
     }
@@ -57,6 +130,10 @@
     },
     {
       "key": "dataset_id",
+      "value": ""
+    },
+    {
+      "key": "job_id",
       "value": ""
     }
   ]
