@@ -1,5 +1,7 @@
 # Dataset Processor
 
+[![CI](https://github.com/rodrigowb4ey/dataset-processor/actions/workflows/ci.yml/badge.svg)](https://github.com/rodrigowb4ey/dataset-processor/actions/workflows/ci.yml)
+
 Async dataset processing service where users upload CSV/JSON files, enqueue background processing, poll job progress, and fetch generated reports.
 
 ## Stack
@@ -62,6 +64,24 @@ uv run task db-current
 uv run task db-history
 uv run task db-downgrade
 uv run task db-revision -m "describe your change"
+```
+
+## CI (GitHub Actions)
+
+The CI workflow lives at `.github/workflows/ci.yml` and runs on every pull request and on pushes to `main`.
+
+Jobs are intentionally mapped to Taskipy commands to keep local and CI behavior aligned:
+
+- `quality`: `uv run task check`
+- `tests`: `uv run task test`
+- `e2e`: `uv run task test-e2e`
+
+To run the same checks locally before opening a PR:
+
+```bash
+uv run task check
+uv run task test
+uv run task test-e2e
 ```
 
 ## Logging
