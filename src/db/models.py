@@ -86,6 +86,12 @@ class Job(Base):
         sa.Index("ix_jobs_dataset_id", "dataset_id"),
         sa.Index("ix_jobs_state", "state"),
         sa.Index("ix_jobs_queued_at", "queued_at"),
+        sa.Index(
+            "uq_jobs_active_dataset",
+            "dataset_id",
+            unique=True,
+            postgresql_where=sa.text("state IN ('queued','started','retrying')"),
+        ),
     )
 
 

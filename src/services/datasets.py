@@ -1,4 +1,5 @@
 import uuid
+from datetime import UTC, datetime
 from typing import cast
 
 from sqlalchemy import select
@@ -115,9 +116,20 @@ async def enqueue_dataset_processing(
             select(Report.id).where(Report.dataset_id == dataset_id).limit(1)
         )
         if dataset.status == DatasetStatus.done.value and report_id:
-            if not latest_job:
-                raise DatabaseError("Dataset is done but no job records were found.")
-            return latest_job
+            if latest_job:
+                return latest_job
+            synthetic_job = Job(
+                id=uuid.uuid4(),
+                dataset_id=dataset.id,
+                state=JobState.success.value,
+                progress=100,
+                started_at=datetime.now(UTC),
+                finished_at=datetime.now(UTC),
+            )
+            session.add(synthetic_job)
+            await session.commit()
+            await session.refresh(synthetic_job)
+            return synthetic_job
 
         job = Job(
             id=uuid.uuid4(),
@@ -126,7 +138,25 @@ async def enqueue_dataset_processing(
             progress=0,
         )
         session.add(job)
-        await session.commit()
+        try:
+            await session.commit()
+        except IntegrityError:
+            await session.rollback()
+            existing_active_job = cast(
+                "Job | None",
+                await session.scalar(
+                    select(Job)
+                    .where(
+                        Job.dataset_id == dataset_id,
+                        Job.state.in_(ACTIVE_JOB_STATES),
+                    )
+                    .order_by(Job.queued_at.desc())
+                    .limit(1)
+                ),
+            )
+            if existing_active_job:
+                return existing_active_job
+            raise
         await session.refresh(job)
 
         try:

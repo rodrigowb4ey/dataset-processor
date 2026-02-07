@@ -1,0 +1,30 @@
+"""add active job unique index
+
+Revision ID: 20260206_000002
+Revises: 20260131_000001
+Create Date: 2026-02-06 00:00:02
+
+"""
+
+from alembic import op
+import sqlalchemy as sa
+
+
+revision = "20260206_000002"
+down_revision = "20260131_000001"
+branch_labels = None
+depends_on = None
+
+
+def upgrade() -> None:
+    op.create_index(
+        "uq_jobs_active_dataset",
+        "jobs",
+        ["dataset_id"],
+        unique=True,
+        postgresql_where=sa.text("state IN ('queued','started','retrying')"),
+    )
+
+
+def downgrade() -> None:
+    op.drop_index("uq_jobs_active_dataset", table_name="jobs")

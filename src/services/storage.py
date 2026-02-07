@@ -1,4 +1,6 @@
+import json
 import math
+from io import BytesIO
 from typing import BinaryIO
 
 from minio import Minio
@@ -45,3 +47,29 @@ def upload_object(
         content_type=content_type,
     )
     return result.etag
+
+
+def download_object(client: Minio, bucket: str, object_key: str) -> bytes:
+    response = client.get_object(bucket_name=bucket, object_name=object_key)
+    try:
+        return response.read()
+    finally:
+        response.close()
+        response.release_conn()
+
+
+def upload_json_object(
+    client: Minio,
+    bucket: str,
+    object_key: str,
+    payload: dict[str, object],
+) -> str | None:
+    body = json.dumps(payload, separators=(",", ":"), default=str).encode("utf-8")
+    return upload_object(
+        client=client,
+        bucket=bucket,
+        object_key=object_key,
+        data=BytesIO(body),
+        length=len(body),
+        content_type="application/json",
+    )

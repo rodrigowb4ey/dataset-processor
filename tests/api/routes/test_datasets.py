@@ -248,7 +248,7 @@ async def test_get_dataset_with_jobs_and_report(
     sessionmaker = async_sessionmaker(async_engine, expire_on_commit=False)
     now = datetime.now(UTC)
     async with sessionmaker() as session:
-        job_earlier = Job(dataset_id=dataset_id, state="queued", queued_at=now)
+        job_earlier = Job(dataset_id=dataset_id, state="success", queued_at=now)
         job_latest = Job(
             dataset_id=dataset_id,
             state="started",
@@ -477,8 +477,15 @@ async def test_process_dataset_done_with_report_but_no_jobs(
 
     response = await client.post(f"/datasets/{dataset_id}/process")
 
-    assert response.status_code == 503
-    assert response.json()["detail"] == "Dataset is done but no job records were found."
+    assert response.status_code == 202
+    payload = response.json()
+    assert payload["dataset_id"] == str(dataset_id)
+    assert payload["state"] == "success"
+    assert payload["progress"] == 100
+
+    async with sessionmaker() as session:
+        jobs = (await session.scalars(select(Job).where(Job.dataset_id == dataset_id))).all()
+        assert len(jobs) == 1
 
 
 async def test_process_dataset_enqueue_failure_marks_job_failed(
@@ -537,3 +544,89 @@ async def test_process_dataset_database_error_returns_503(
 
     assert response.status_code == 503
     assert response.json()["detail"] == "Database error."
+
+
+async def test_get_job_success(
+    client: AsyncClient,
+    dataset_name: str,
+    sample_csv_bytes: bytes,
+    async_engine: AsyncEngine,
+) -> None:
+    upload = await client.post(
+        "/datasets",
+        data={"name": dataset_name},
+        files={"file": ("data.csv", sample_csv_bytes, "text/csv")},
+    )
+    dataset_id = UUID(upload.json()["id"])
+
+    sessionmaker = async_sessionmaker(async_engine, expire_on_commit=False)
+    async with sessionmaker() as session:
+        job = Job(dataset_id=dataset_id, state="started", progress=40)
+        session.add(job)
+        await session.commit()
+
+    response = await client.get(f"/jobs/{job.id}")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["id"] == str(job.id)
+    assert payload["dataset_id"] == str(dataset_id)
+    assert payload["state"] == "started"
+    assert payload["progress"] == 40
+
+
+async def test_get_job_not_found_returns_404(client: AsyncClient) -> None:
+    response = await client.get(f"/jobs/{uuid4()}")
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Job not found."
+
+
+async def test_get_report_success(
+    client: AsyncClient,
+    dataset_name: str,
+    sample_csv_bytes: bytes,
+    async_engine: AsyncEngine,
+) -> None:
+    upload = await client.post(
+        "/datasets",
+        data={"name": dataset_name},
+        files={"file": ("data.csv", sample_csv_bytes, "text/csv")},
+    )
+    dataset_id = UUID(upload.json()["id"])
+
+    report_payload = {"row_count": 2, "null_counts": {"value": 0}}
+    sessionmaker = async_sessionmaker(async_engine, expire_on_commit=False)
+    async with sessionmaker() as session:
+        report = Report(
+            dataset_id=dataset_id,
+            report_json=report_payload,
+            report_bucket=settings.s3_bucket_reports,
+            report_key=f"datasets/{dataset_id}/report/report.json",
+            report_etag="etag",
+        )
+        session.add(report)
+        await session.commit()
+
+    response = await client.get(f"/datasets/{dataset_id}/report")
+
+    assert response.status_code == 200
+    assert response.json() == report_payload
+
+
+async def test_get_report_not_ready_returns_404(
+    client: AsyncClient,
+    dataset_name: str,
+    sample_csv_bytes: bytes,
+) -> None:
+    upload = await client.post(
+        "/datasets",
+        data={"name": dataset_name},
+        files={"file": ("data.csv", sample_csv_bytes, "text/csv")},
+    )
+    dataset_id = upload.json()["id"]
+
+    response = await client.get(f"/datasets/{dataset_id}/report")
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Report not found."

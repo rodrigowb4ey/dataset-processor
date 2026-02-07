@@ -142,7 +142,7 @@ async def test_get_dataset_summary_returns_latest_job_and_report_flag(
         session.add(dataset)
         await session.commit()
 
-        job_earlier = build_job(dataset.id, state="queued", queued_at=now)
+        job_earlier = build_job(dataset.id, state="success", queued_at=now)
         job_latest = build_job(
             dataset.id,
             state="started",
@@ -313,15 +313,15 @@ async def test_enqueue_dataset_processing_done_with_report_but_no_jobs(
         session.add(report)
         await session.commit()
 
-        with pytest.raises(
-            DatabaseError,
-            match=r"Dataset is done but no job records were found\.",
-        ):
-            await datasets_service.enqueue_dataset_processing(session, dataset.id)
+        result = await datasets_service.enqueue_dataset_processing(session, dataset.id)
 
         jobs = (await session.scalars(select(Job).where(Job.dataset_id == dataset.id))).all()
 
-    assert len(jobs) == 0
+    assert result.state == "success"
+    assert result.progress == 100
+    assert result.started_at is not None
+    assert result.finished_at is not None
+    assert len(jobs) == 1
 
 
 async def test_enqueue_dataset_processing_enqueue_failure_marks_job_failed(
