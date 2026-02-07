@@ -76,6 +76,20 @@ async def get_dataset_summary(
     return dataset, latest_job_id, bool(report_id)
 
 
+async def get_dataset_report(session: AsyncSession, dataset_id: uuid.UUID) -> Report:
+    try:
+        report = cast(
+            "Report | None",
+            await session.scalar(select(Report).where(Report.dataset_id == dataset_id).limit(1)),
+        )
+        if report is None:
+            raise NotFoundError("Report not found.")
+    except SQLAlchemyError as exc:
+        raise DatabaseError() from exc
+
+    return report
+
+
 async def enqueue_dataset_processing(
     session: AsyncSession,
     dataset_id: uuid.UUID,

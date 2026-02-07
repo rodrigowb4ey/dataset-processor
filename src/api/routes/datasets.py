@@ -3,7 +3,7 @@ import uuid
 from pathlib import Path
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, File, Form, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, Response, UploadFile, status
 from pydantic import ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -25,7 +25,7 @@ from src.core.schemas import (
 from src.db.models import Dataset, Job
 from src.db.session import get_async_session
 from src.services import datasets as datasets_service
-from src.services.storage import build_minio_client, ensure_bucket, upload_object
+from src.services.storage import build_minio_client, download_object, ensure_bucket, upload_object
 from src.utils.checksum import compute_sha256_and_size
 
 router = APIRouter(prefix="/datasets", tags=["datasets"])
@@ -119,6 +119,27 @@ async def get_dataset(
         report_available=report_available,
         error=dataset.error,
     )
+
+
+@router.get("/{dataset_id}/report")
+async def get_dataset_report(
+    session: Annotated[AsyncSession, Depends(get_async_session)],
+    dataset_id: uuid.UUID,
+) -> Response:
+    report = await datasets_service.get_dataset_report(session, dataset_id)
+
+    client = build_minio_client()
+    try:
+        payload = await asyncio.to_thread(
+            download_object,
+            client,
+            report.report_bucket,
+            report.report_key,
+        )
+    except Exception as exc:
+        raise StorageError("Failed to download report from storage.") from exc
+
+    return Response(content=payload, media_type="application/json")
 
 
 @router.post(

@@ -6,7 +6,6 @@ from fastapi.responses import JSONResponse
 
 from src.api.routes.datasets import router as datasets_router
 from src.api.routes.jobs import router as jobs_router
-from src.api.routes.reports import router as reports_router
 from src.core.errors import AppError, UnexpectedError
 
 app = FastAPI()
@@ -14,7 +13,6 @@ logger = logging.getLogger(__name__)
 
 app.include_router(datasets_router)
 app.include_router(jobs_router)
-app.include_router(reports_router)
 
 
 @app.exception_handler(AppError)

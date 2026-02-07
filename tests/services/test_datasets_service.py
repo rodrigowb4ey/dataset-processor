@@ -205,6 +205,45 @@ async def test_get_dataset_summary_database_error(
             await datasets_service.get_dataset_summary(session, uuid4())
 
 
+async def test_get_dataset_report_returns_report(async_engine: AsyncEngine) -> None:
+    sessionmaker = async_sessionmaker(async_engine, expire_on_commit=False)
+    dataset = build_dataset(checksum="report")
+    report = build_report(dataset.id)
+
+    async with sessionmaker() as session:
+        session.add_all([dataset, report])
+        await session.commit()
+
+        result = await datasets_service.get_dataset_report(session, dataset.id)
+
+    assert result.dataset_id == dataset.id
+    assert result.report_bucket == settings.s3_bucket_reports
+
+
+async def test_get_dataset_report_not_found(async_engine: AsyncEngine) -> None:
+    sessionmaker = async_sessionmaker(async_engine, expire_on_commit=False)
+
+    async with sessionmaker() as session:
+        with pytest.raises(NotFoundError):
+            await datasets_service.get_dataset_report(session, uuid4())
+
+
+async def test_get_dataset_report_database_error(
+    async_engine: AsyncEngine,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sessionmaker = async_sessionmaker(async_engine, expire_on_commit=False)
+
+    async def failing_scalar(*_args: object, **_kwargs: object) -> None:
+        raise SQLAlchemyError("boom")
+
+    monkeypatch.setattr(AsyncSession, "scalar", failing_scalar)
+
+    async with sessionmaker() as session:
+        with pytest.raises(DatabaseError):
+            await datasets_service.get_dataset_report(session, uuid4())
+
+
 async def test_enqueue_dataset_processing_creates_job(
     async_engine: AsyncEngine,
     monkeypatch: pytest.MonkeyPatch,
