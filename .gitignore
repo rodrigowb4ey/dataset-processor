@@ -177,3 +177,5 @@ pyrightconfig.json
 **/node_modules/
 dataset_processor_web/dist/
 dataset_processor_web/coverage/
+!dataset_processor_web/src/lib/
+!dataset_processor_web/src/lib/**
