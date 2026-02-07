@@ -138,6 +138,7 @@ venv.bak/
 
 # mkdocs documentation
 /site
+/dataset_processor_api/site
 
 # mypy
 .mypy_cache/
@@ -171,3 +172,8 @@ poetry.toml
 pyrightconfig.json
 
 # End of https://www.toptal.com/developers/gitignore/api/python
+
+# Frontend
+**/node_modules/
+dataset_processor_web/dist/
+dataset_processor_web/coverage/

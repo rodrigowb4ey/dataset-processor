@@ -18,6 +18,7 @@ from src.core.errors import (
 )
 from src.core.logging import bind_context, clear_context, get_logger
 from src.core.schemas import (
+    DatasetList,
     DatasetPublic,
     DatasetSchema,
     DatasetStatus,
@@ -44,6 +45,23 @@ def _job_response(job: Job) -> JobEnqueuePublic:
         dataset_id=job.dataset_id,
         state=JobState(job.state),
         progress=job.progress,
+    )
+
+
+def _dataset_response(
+    dataset: Dataset,
+    latest_job_id: uuid.UUID | None,
+    report_available: bool,
+) -> DatasetPublic:
+    """Convert dataset summary pieces into the public API schema."""
+    return DatasetPublic(
+        id=dataset.id,
+        name=dataset.name,
+        status=DatasetStatus(dataset.status),
+        row_count=dataset.row_count,
+        latest_job_id=latest_job_id,
+        report_available=report_available,
+        error=dataset.error,
     )
 
 
@@ -131,6 +149,21 @@ async def upload_dataset(
     return created
 
 
+@router.get("", response_model=DatasetList)
+async def list_datasets(
+    session: Annotated[AsyncSession, Depends(get_async_session)],
+) -> DatasetList:
+    """Return dataset summaries ordered by most recently uploaded first."""
+    dataset_summaries = await datasets_service.list_dataset_summaries(session)
+    logger.info("datasets.list.completed", total_datasets=len(dataset_summaries))
+    return DatasetList(
+        datasets=[
+            _dataset_response(dataset, latest_job_id, report_available)
+            for dataset, latest_job_id, report_available in dataset_summaries
+        ]
+    )
+
+
 @router.get("/{dataset_id}", response_model=DatasetPublic)
 async def get_dataset(
     session: Annotated[AsyncSession, Depends(get_async_session)],
@@ -141,15 +174,7 @@ async def get_dataset(
         session, dataset_id
     )
 
-    return DatasetPublic(
-        id=dataset.id,
-        name=dataset.name,
-        status=DatasetStatus(dataset.status),
-        row_count=dataset.row_count,
-        latest_job_id=latest_job_id,
-        report_available=report_available,
-        error=dataset.error,
-    )
+    return _dataset_response(dataset, latest_job_id, report_available)
 
 
 @router.get("/{dataset_id}/report")

@@ -212,6 +212,82 @@ async def test_upload_database_error_returns_503(
     assert response.json()["detail"] == "Database error."
 
 
+async def test_list_datasets_empty_returns_empty_list(client: AsyncClient) -> None:
+    response = await client.get("/datasets")
+
+    assert response.status_code == 200
+    assert response.json() == {"datasets": []}
+
+
+async def test_list_datasets_returns_ordered_summaries(
+    client: AsyncClient,
+    sample_csv_bytes: bytes,
+    async_engine: AsyncEngine,
+) -> None:
+    first_upload = await client.post(
+        "/datasets",
+        data={"name": "North sales"},
+        files={"file": ("north.csv", sample_csv_bytes, "text/csv")},
+    )
+    second_upload = await client.post(
+        "/datasets",
+        data={"name": "South sales"},
+        files={"file": ("south.csv", b"id,total\n1,99\n", "text/csv")},
+    )
+
+    assert first_upload.status_code == 201
+    assert second_upload.status_code == 201
+
+    first_dataset_id = UUID(first_upload.json()["id"])
+    second_dataset_id = UUID(second_upload.json()["id"])
+
+    sessionmaker = async_sessionmaker(async_engine, expire_on_commit=False)
+    now = datetime.now(UTC)
+    async with sessionmaker() as session:
+        first_dataset = await session.get(Dataset, first_dataset_id)
+        assert first_dataset is not None
+        first_dataset.status = "failed"
+        first_dataset.error = "Parse failed"
+        first_dataset.row_count = 0
+
+        earlier_job = Job(dataset_id=first_dataset_id, state="success", queued_at=now)
+        latest_job = Job(
+            dataset_id=first_dataset_id,
+            state="failure",
+            queued_at=now + timedelta(seconds=5),
+            progress=100,
+            error="Parse failed",
+        )
+        report = Report(
+            dataset_id=first_dataset_id,
+            report_bucket=settings.s3_bucket_reports,
+            report_key=f"datasets/{first_dataset_id}/report/report.json",
+            report_etag="etag",
+        )
+        session.add_all([earlier_job, latest_job, report])
+        await session.commit()
+
+    response = await client.get("/datasets")
+
+    assert response.status_code == 200
+    payload = response.json()["datasets"]
+
+    assert [item["id"] for item in payload] == [str(second_dataset_id), str(first_dataset_id)]
+
+    second_dataset_payload = payload[0]
+    assert second_dataset_payload["name"] == "South sales"
+    assert second_dataset_payload["latest_job_id"] is None
+    assert second_dataset_payload["report_available"] is False
+
+    first_dataset_payload = payload[1]
+    assert first_dataset_payload["name"] == "North sales"
+    assert first_dataset_payload["status"] == "failed"
+    assert first_dataset_payload["row_count"] == 0
+    assert first_dataset_payload["latest_job_id"] == str(latest_job.id)
+    assert first_dataset_payload["report_available"] is True
+    assert first_dataset_payload["error"] == "Parse failed"
+
+
 async def test_get_dataset_success_defaults(
     client: AsyncClient,
     dataset_name: str,

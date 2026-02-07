@@ -93,6 +93,53 @@ async def get_dataset_summary(
     return dataset, latest_job_id, bool(report_id)
 
 
+async def list_dataset_summaries(
+    session: AsyncSession,
+) -> list[tuple[Dataset, uuid.UUID | None, bool]]:
+    """Return all datasets with latest job id and report availability."""
+    try:
+        datasets = list(
+            (await session.scalars(select(Dataset).order_by(Dataset.uploaded_at.desc()))).all()
+        )
+        if not datasets:
+            return []
+
+        dataset_ids = [dataset.id for dataset in datasets]
+
+        jobs = list(
+            (
+                await session.scalars(
+                    select(Job)
+                    .where(Job.dataset_id.in_(dataset_ids))
+                    .order_by(Job.dataset_id, Job.queued_at.desc())
+                )
+            ).all()
+        )
+        latest_job_by_dataset: dict[uuid.UUID, uuid.UUID] = {}
+        for job in jobs:
+            latest_job_by_dataset.setdefault(job.dataset_id, job.id)
+
+        report_dataset_ids = set(
+            (
+                await session.scalars(
+                    select(Report.dataset_id).where(Report.dataset_id.in_(dataset_ids))
+                )
+            ).all()
+        )
+    except SQLAlchemyError as exc:
+        logger.exception("datasets.list_summaries.database_failed", exc_info=exc)
+        raise DatabaseError() from exc
+
+    return [
+        (
+            dataset,
+            latest_job_by_dataset.get(dataset.id),
+            dataset.id in report_dataset_ids,
+        )
+        for dataset in datasets
+    ]
+
+
 async def get_dataset_report(session: AsyncSession, dataset_id: uuid.UUID) -> Report:
     """Return persisted report metadata for a dataset."""
     try:

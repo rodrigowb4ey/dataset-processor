@@ -1,0 +1,29 @@
+:root {
+  --surface-page: #f7f4ec;
+  --surface-overlay: #fff9ef;
+  --text-main: #10212b;
+
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+  color: var(--text-main);
+  background:
+    radial-gradient(circle at 12% 12%, rgba(45, 168, 158, 0.16), transparent 34%),
+    radial-gradient(circle at 88% 22%, rgba(245, 158, 11, 0.11), transparent 32%),
+    linear-gradient(180deg, var(--surface-overlay), var(--surface-page));
+}

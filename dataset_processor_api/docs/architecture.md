@@ -2,6 +2,8 @@
 
 ## High-level flow
 
+The React web client consumes the API endpoints and orchestrates this lifecycle from the browser.
+
 1. Client uploads a dataset (`POST /datasets`).
 2. API stores file in MinIO and metadata in Postgres.
 3. Client requests processing (`POST /datasets/{id}/process`).

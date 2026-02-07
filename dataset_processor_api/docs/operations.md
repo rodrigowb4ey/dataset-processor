@@ -20,6 +20,10 @@ View service logs:
 uv run task stack-logs
 ```
 
+Open web UI:
+
+- `http://localhost:5173`
+
 ## Quality checks
 
 Run full local quality checks:

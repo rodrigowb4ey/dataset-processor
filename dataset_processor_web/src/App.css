@@ -1,0 +1,93 @@
+.app-shell {
+  position: relative;
+  min-height: 100vh;
+  overflow-x: clip;
+}
+
+.app-content {
+  position: relative;
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 2.5rem 1rem 3rem;
+  z-index: 2;
+}
+
+.ambient-orb {
+  position: absolute;
+  border-radius: 999px;
+  filter: blur(28px);
+  opacity: 0.35;
+  pointer-events: none;
+}
+
+.ambient-orb--one {
+  width: 24rem;
+  height: 24rem;
+  top: -4rem;
+  right: -8rem;
+  background: radial-gradient(circle at center, rgba(47, 160, 151, 0.55), rgba(47, 160, 151, 0));
+  animation: drift 9s ease-in-out infinite;
+}
+
+.ambient-orb--two {
+  width: 18rem;
+  height: 18rem;
+  bottom: 3rem;
+  left: -6rem;
+  background: radial-gradient(circle at center, rgba(245, 158, 11, 0.42), rgba(245, 158, 11, 0));
+  animation: drift 11s ease-in-out infinite reverse;
+}
+
+.hero-card,
+.surface-card,
+.metric-card {
+  background: linear-gradient(155deg, rgba(255, 255, 255, 0.94), rgba(248, 250, 252, 0.92));
+  box-shadow: 0 12px 28px rgba(23, 42, 50, 0.08);
+}
+
+.hero-card {
+  animation: fade-up 450ms ease-out both;
+}
+
+.stagger-card {
+  animation: fade-up 450ms ease-out both;
+}
+
+.stagger-card:nth-of-type(2) {
+  animation-delay: 80ms;
+}
+
+.stagger-card:nth-of-type(3) {
+  animation-delay: 160ms;
+}
+
+.metric-card {
+  border-color: rgba(32, 129, 121, 0.2);
+}
+
+@keyframes fade-up {
+  from {
+    transform: translateY(8px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+@keyframes drift {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0);
+  }
+  50% {
+    transform: translate3d(0, -10px, 0);
+  }
+}
+
+@media (max-width: 768px) {
+  .app-content {
+    padding: 1rem 0.8rem 2rem;
+  }
+}

@@ -14,6 +14,7 @@
 
 ## Dataset retrieval
 
+- `GET /datasets` returns all dataset summaries ordered by most recent upload.
 - `GET /datasets/{dataset_id}` returns:
   - dataset status
   - latest job id

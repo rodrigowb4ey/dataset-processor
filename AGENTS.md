@@ -1,7 +1,7 @@
 # AGENTS
 
 ## Overview
-This project is an async dataset processor + report builder.
+This project is a full-stack async dataset processor + report builder.
 
 Users can:
 - upload CSV/JSON datasets
@@ -9,13 +9,15 @@ Users can:
 - poll job progress
 - fetch generated reports
 
-Current status: the core functional flow is implemented and tested, including true async end-to-end coverage with a real broker and worker in tests.
+Current status: the core functional flow is implemented and tested, including true async end-to-end coverage with a real broker and worker in tests, plus a React web client for interacting with API endpoints.
 
 ## Stack
 - FastAPI (async API)
 - SQLAlchemy 2.0
 - API uses async engine (`asyncpg`)
 - Worker uses sync engine (`psycopg`)
+- React + TypeScript + Mantine UI (web)
+- Vite + Vitest (web tooling/tests)
 - Postgres (source of truth for datasets/jobs/reports)
 - RabbitMQ (Celery broker)
 - MinIO (object storage)
@@ -27,6 +29,7 @@ Current status: the core functional flow is implemented and tested, including tr
 ### Services
 - `api` (FastAPI + uvicorn)
 - `worker` (Celery worker)
+- `web` (React + Vite dev server)
 - `postgres`
 - `rabbitmq` (management UI enabled)
 - `minio`
@@ -35,6 +38,7 @@ Current status: the core functional flow is implemented and tested, including tr
 ### Volumes
 - `postgres_data`
 - `minio_data`
+- `web_node_modules`
 
 ### Networking / Ports
 Internal service hosts used by app/worker:
@@ -43,6 +47,7 @@ Internal service hosts used by app/worker:
 - MinIO: `minio:9000`
 
 Host ports exposed by compose:
+- Web: `5173`
 - API: `8000`
 - Postgres: `5432`
 - RabbitMQ AMQP: `5673`
@@ -169,11 +174,16 @@ Indexes:
    - response model: `DatasetUploadPublic`
    - status: `201`
 
-2. `GET /datasets/{dataset_id}`
+2. `GET /datasets`
+   - returns all dataset summaries in descending `uploaded_at` order
+   - each summary includes `latest_job_id` and `report_available`
+   - response model: `DatasetList`
+
+3. `GET /datasets/{dataset_id}`
    - returns dataset summary with `latest_job_id` and `report_available`
    - response model: `DatasetPublic`
 
-3. `POST /datasets/{dataset_id}/process`
+4. `POST /datasets/{dataset_id}/process`
    - idempotent enqueue behavior:
       - if active job exists (`queued|started|retrying`), returns it
       - if dataset is `done` and report exists, returns latest job
@@ -185,17 +195,17 @@ Indexes:
    - response model: `JobEnqueuePublic`
    - status: `202`
 
-4. `GET /datasets/{dataset_id}/report`
+5. `GET /datasets/{dataset_id}/report`
    - loads JSON report object from MinIO (`report_bucket` + `report_key` in DB)
    - returns `404` if report is not ready
    - returns `503` if metadata exists but report object download fails
 
 ### Jobs
-5. `GET /jobs`
+6. `GET /jobs`
    - returns all jobs in descending `queued_at` order
    - response model: `JobList`
 
-6. `GET /jobs/{job_id}`
+7. `GET /jobs/{job_id}`
    - returns job details
    - response model: `JobPublic`
    - returns `404` when missing
@@ -267,56 +277,22 @@ Implemented test coverage:
 .
 ├── AGENTS.md
 ├── README.md
-├── pyproject.toml
-├── uv.lock
 ├── docker-compose.yml
-├── docker/
-│   ├── api.Dockerfile
-│   └── worker.Dockerfile
-├── alembic.ini
-├── migrations/
-│   ├── env.py
-│   └── versions/
-│       ├── 20260131_000001_create_datasets_jobs_reports.py
-│       ├── 20260206_000002_add_active_job_unique_index.py
-│       └── 20260207_000003_drop_reports_report_json.py
-├── postman/
-│   └── dataset-processor.postman_collection.json
-├── src/
-│   ├── api/
-│   │   ├── main.py
-│   │   └── routes/
-│   │       ├── datasets.py
-│   │       ├── jobs.py
-│   │       └── __init__.py
-│   ├── core/
-│   │   ├── config.py
-│   │   ├── errors.py
-│   │   ├── logging.py
-│   │   └── schemas.py
-│   ├── db/
-│   │   ├── base.py
-│   │   ├── models.py
-│   │   └── session.py
-│   ├── processing/
-│   │   ├── parsers.py
-│   │   ├── stats.py
-│   │   └── anomalies.py
-│   ├── services/
-│   │   ├── datasets.py
-│   │   ├── jobs.py
-│   │   └── storage.py
-│   ├── utils/
-│   │   └── checksum.py
-│   └── worker/
-│       ├── celery_app.py
-│       └── tasks.py
-└── tests/
-    ├── api/
-    ├── e2e/
-    ├── processing/
-    ├── services/
-    └── worker/
+├── dataset_processor_api/
+│   ├── pyproject.toml
+│   ├── uv.lock
+│   ├── docker/
+│   │   ├── api.Dockerfile
+│   │   └── worker.Dockerfile
+│   ├── migrations/
+│   ├── src/
+│   ├── tests/
+│   ├── docs/
+│   └── postman/
+└── dataset_processor_web/
+    ├── package.json
+    ├── vite.config.ts
+    └── src/
 ```
 
 ## Stretch Roadmap (Future)
